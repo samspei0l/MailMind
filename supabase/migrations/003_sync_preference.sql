@@ -22,9 +22,12 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- 2. Add sync-preference column to profiles.
 --    NULL = manual sync only; otherwise minutes between auto-syncs.
+--    Vercel Hobby plan only supports daily crons, so the UI currently
+--    exposes just 1440 (daily). Column is intentionally generic so a
+--    future Pro upgrade can surface finer intervals without migrating.
 ALTER TABLE public.profiles
   ADD COLUMN IF NOT EXISTS sync_frequency_minutes INTEGER
-    CHECK (sync_frequency_minutes IS NULL OR sync_frequency_minutes IN (5, 15, 30, 60));
+    CHECK (sync_frequency_minutes IS NULL OR sync_frequency_minutes > 0);
 
 -- 3. Rewrite the new-user trigger so signup metadata flows into the profile
 CREATE OR REPLACE FUNCTION public.handle_new_user()

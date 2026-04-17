@@ -15,14 +15,14 @@ export type ComposedEmailStatus = 'draft' | 'sent' | 'failed';
 export const MAX_EMAIL_ACCOUNTS = 10;
 
 // Sync frequency — minutes between auto-syncs. null = manual only.
-export type SyncFrequency = 5 | 15 | 30 | 60 | null;
+// Hosting note: Vercel Hobby only permits daily crons, so UI exposes
+// daily (1440) or manual. The schema stores minutes, so finer
+// intervals can be added later without a migration.
+export type SyncFrequency = 1440 | null;
 
 export const SYNC_FREQUENCY_OPTIONS: Array<{ value: SyncFrequency; label: string; description: string }> = [
-  { value: 5,    label: 'Every 5 minutes',  description: 'Near real-time — best for busy inboxes' },
-  { value: 15,   label: 'Every 15 minutes', description: 'Frequent — good default' },
-  { value: 30,   label: 'Every 30 minutes', description: 'Balanced' },
-  { value: 60,   label: 'Every hour',       description: 'Light — saves API quota' },
-  { value: null, label: 'Manual only',      description: 'Never auto-sync' },
+  { value: 1440, label: 'Once a day',  description: 'Auto-sync once every 24 hours' },
+  { value: null, label: 'Manual only', description: 'Never auto-sync — you pull manually' },
 ];
 
 // ============================================================

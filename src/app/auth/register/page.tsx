@@ -11,7 +11,7 @@ export default function RegisterPage() {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [syncFrequency, setSyncFrequency] = useState<SyncFrequency>(15);
+  const [syncFrequency, setSyncFrequency] = useState<SyncFrequency>(1440);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
