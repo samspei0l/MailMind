@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { Email, EmailFilters, EmailConnection } from '@/types';
 import { formatDistanceToNow } from 'date-fns';
-import { Search, Filter, X, Mail, RefreshCw, Reply } from 'lucide-react';
+import { Search, Filter, X, Mail, RefreshCw, Reply, Sparkles } from 'lucide-react';
 import EmailDetailPanel from './EmailDetailPanel';
 import dynamic from 'next/dynamic';
 
@@ -38,6 +38,13 @@ export default function InboxClient({ initialEmails, initialFilters }: Props) {
   const [showFilters, setShowFilters] = useState(false);
   const [connections, setConnections] = useState<Pick<EmailConnection, 'id' | 'email' | 'nickname' | 'color' | 'provider'>[]>([]);
   const [composeOpen, setComposeOpen] = useState(false);
+  // When set to an email id, EmailDetailPanel opens directly into AI-reply mode
+  const [replyForId, setReplyForId] = useState<string | null>(null);
+
+  function openEmail(email: Email, reply = false) {
+    setSelectedEmail((prev) => (prev?.id === email.id && !reply ? null : email));
+    setReplyForId(reply ? email.id : null);
+  }
 
   // Load connections for reply routing
   useEffect(() => {
@@ -185,8 +192,11 @@ export default function InboxClient({ initialEmails, initialFilters }: Props) {
             // Show account color dot if multiple accounts
             const conn = connections.find((c) => c.id === email.connection_id);
             return (
-              <button key={email.id} onClick={() => setSelectedEmail(email.id === selectedEmail?.id ? null : email)}
-                className={`w-full text-left px-4 py-3.5 border-b border-border/50 hover:bg-muted/30 transition-colors ${selectedEmail?.id === email.id ? 'bg-primary/5 border-l-2 border-l-primary' : ''} ${!email.is_read ? 'bg-blue-50/30 dark:bg-blue-950/10' : ''}`}>
+              <div key={email.id}
+                role="button" tabIndex={0}
+                onClick={() => openEmail(email)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEmail(email); } }}
+                className={`w-full text-left px-4 py-3.5 border-b border-border/50 hover:bg-muted/30 transition-colors cursor-pointer ${selectedEmail?.id === email.id ? 'bg-primary/5 border-l-2 border-l-primary' : ''} ${!email.is_read ? 'bg-blue-50/30 dark:bg-blue-950/10' : ''}`}>
                 <div className="flex items-start gap-2.5">
                   {/* Account color + unread dot */}
                   <div className="flex flex-col items-center gap-1 mt-1.5 flex-shrink-0">
@@ -224,10 +234,17 @@ export default function InboxClient({ initialEmails, initialFilters }: Props) {
                           <Reply className="w-2.5 h-2.5" /> Reply needed
                         </span>
                       )}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); openEmail(email, true); }}
+                        className="ml-auto inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 font-medium transition-colors"
+                        title="Draft a reply with AI"
+                      >
+                        <Sparkles className="w-3 h-3" /> Reply with AI
+                      </button>
                     </div>
                   </div>
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>
@@ -238,7 +255,8 @@ export default function InboxClient({ initialEmails, initialFilters }: Props) {
         <EmailDetailPanel
           email={selectedEmail}
           connections={connections}
-          onClose={() => setSelectedEmail(null)}
+          autoOpenReply={replyForId === selectedEmail.id}
+          onClose={() => { setSelectedEmail(null); setReplyForId(null); }}
         />
       )}
 

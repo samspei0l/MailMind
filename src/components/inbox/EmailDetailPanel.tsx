@@ -13,6 +13,7 @@ interface Props {
   email: Email;
   connections: Pick<EmailConnection, 'id' | 'email' | 'nickname' | 'color' | 'provider'>[];
   onClose: () => void;
+  autoOpenReply?: boolean;
 }
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -21,8 +22,8 @@ const PRIORITY_COLORS: Record<string, string> = {
   LOW:    'text-green-600 bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800 dark:text-green-400',
 };
 
-export default function EmailDetailPanel({ email, connections, onClose }: Props) {
-  const [replying, setReplying] = useState(false);
+export default function EmailDetailPanel({ email, connections, onClose, autoOpenReply = false }: Props) {
+  const [replying, setReplying] = useState(autoOpenReply);
   const [prompt, setPrompt] = useState('');
   const [tone, setTone] = useState<EmailTone>('professional');
   const [fromId, setFromId] = useState('');
@@ -43,6 +44,17 @@ export default function EmailDetailPanel({ email, connections, onClose }: Props)
     }
     if (connections[0]) setFromId(connections[0].id);
   }, [email.connection_id, connections]);
+
+  // When the parent opens the panel in AI-reply mode, or switches to a
+  // different email with the flag still on, drop into the reply composer.
+  useEffect(() => {
+    if (autoOpenReply) {
+      setReplying(true);
+      setReplySent(false);
+      setShowPreview(false);
+      setPrompt('');
+    }
+  }, [autoOpenReply, email.id]);
 
   async function handleGenerate(overridePrompt?: string) {
     const p = overridePrompt || prompt;

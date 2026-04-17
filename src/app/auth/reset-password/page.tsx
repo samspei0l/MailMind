@@ -18,30 +18,67 @@ export default function ResetPasswordPage() {
   const router = useRouter();
   const supabase = createSupabaseClient();
 
-  // Supabase fires PASSWORD_RECOVERY after it parses the token from the URL hash
+  // Reset-link flow:
+  //   1. Supabase email link lands here with either a URL hash
+  //      (#access_token=...&type=recovery) or a PKCE code (?code=...).
+  //   2. The Supabase client auto-parses it and fires PASSWORD_RECOVERY
+  //      (or SIGNED_IN for PKCE), which creates a short-lived session
+  //      that's only valid for updateUser({ password }).
+  //   3. If no token is in the URL, or the token is invalid/expired,
+  //      no session is ever created — show the expired UI.
   useEffect(() => {
-    let resolved = false;
+    if (typeof window === 'undefined') return;
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'PASSWORD_RECOVERY') {
-        resolved = true;
-        setReady(true);
-        setVerifying(false);
+    const hash = window.location.hash || '';
+    const search = window.location.search || '';
+    const hasRecoveryHash = hash.includes('type=recovery') && hash.includes('access_token');
+    const hasPkceCode = new URLSearchParams(search).has('code');
+    const hasAuthError = hash.includes('error=') || search.includes('error=');
+
+    // Page was opened directly, or Supabase bounced the link (often because
+    // the redirect URL isn't allowlisted in the project's auth settings).
+    if (!hasRecoveryHash && !hasPkceCode) {
+      setVerifying(false);
+      return;
+    }
+    if (hasAuthError) {
+      setVerifying(false);
+      return;
+    }
+
+    let resolved = false;
+    const finish = (ok: boolean) => {
+      if (resolved) return;
+      resolved = true;
+      setReady(ok);
+      setVerifying(false);
+    };
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY' || (event === 'SIGNED_IN' && session)) {
+        finish(true);
       }
     });
 
-    // Fallback: if the session was already established (user hit the link and
-    // came back), check once after a short delay
-    const t = setTimeout(async () => {
-      if (resolved) return;
+    // Poll getSession — auth-helpers parses the URL asynchronously on first
+    // load, and the event can fire before this effect subscribes. 6 * 500ms
+    // gives enough headroom without the user staring at a spinner.
+    let attempts = 0;
+    const interval = setInterval(async () => {
+      attempts++;
       const { data } = await supabase.auth.getSession();
-      if (data.session) setReady(true);
-      setVerifying(false);
-    }, 800);
+      if (data.session) {
+        clearInterval(interval);
+        finish(true);
+      } else if (attempts >= 6) {
+        clearInterval(interval);
+        finish(false);
+      }
+    }, 500);
 
     return () => {
       subscription.unsubscribe();
-      clearTimeout(t);
+      clearInterval(interval);
     };
   }, [supabase]);
 
