@@ -73,13 +73,13 @@ export async function POST(request: NextRequest) {
       role: 'assistant',
       content: assistantMessage,
       action_type: actionPayload.action,
-      action_data: actionPayload as Record<string, unknown>,
+      action_data: actionPayload,
       result_data: {
         emails: result.emails?.slice(0, 10), // Limit stored data
         summary: result.summary,
         replies_sent: result.replies_sent,
         error: result.error,
-      } as Record<string, unknown>,
+      },
     });
 
     return NextResponse.json({

@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import type { AIEmailEnrichment, ActionPayload, EmailTone } from '@/types';
+import type { AIEmailEnrichment, ActionPayload, ActionResult, EmailTone } from '@/types';
 import { TONE_LABELS } from '@/types';
 
 const zai = new OpenAI({
@@ -193,11 +193,12 @@ export async function transcribeVoice(audioBuffer: Buffer, mimeType: string): Pr
     throw new Error('Voice transcription is not available. Add OPENAI_WHISPER_KEY to .env.local with a valid OpenAI key.');
   }
   const whisper = new OpenAI({ apiKey: whisperKey });
-  const audioFile = new File([audioBuffer], 'voice.webm', { type: mimeType });
+  const audioFile = new File([new Uint8Array(audioBuffer)], 'voice.webm', { type: mimeType });
   const result = await whisper.audio.transcriptions.create({
     model: 'whisper-1', file: audioFile, language: 'en', response_format: 'verbose_json',
   });
-  return { transcript: result.text, duration: (result as Record<string, unknown>).duration as number || 0 };
+  const duration = (result as unknown as { duration?: number }).duration ?? 0;
+  return { transcript: result.text, duration };
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +206,7 @@ export async function transcribeVoice(audioBuffer: Buffer, mimeType: string): Pr
 // ---------------------------------------------------------------------------
 export async function generateChatResponse(
   userMessage: string,
-  actionResult: Record<string, unknown>,
+  actionResult: ActionResult,
   actionPayload: ActionPayload,
 ): Promise<string> {
   const response = await withRetry(() => zai.chat.completions.create({

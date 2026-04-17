@@ -146,7 +146,7 @@ export async function getEmailById(id: string, userId: string): Promise<Email | 
   return data || null;
 }
 
-export async function updateEmailAI(emailId: string, enrichment: Record<string, unknown>) {
+export async function updateEmailAI(emailId: string, enrichment: Partial<Email>) {
   const { error } = await supabase.from('emails').update({ ...enrichment, ai_processed_at: new Date().toISOString() }).eq('id', emailId);
   if (error) throw new Error(`updateEmailAI: ${error.message}`);
 }
