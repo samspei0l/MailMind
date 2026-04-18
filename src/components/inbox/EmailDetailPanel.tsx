@@ -62,28 +62,53 @@ export default function EmailDetailPanel({ email, connections, onClose, autoOpen
     setGenerating(true);
     setReplyError('');
     setShowPreview(false);
-    const res = await fetch('/api/compose', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: p, tone, from_connection_id: fromId, reply_to_email_id: email.id, send_immediately: false }),
-    });
-    const data = await res.json();
-    setGenerating(false);
-    if (data.error) { setReplyError(data.error); return; }
-    setGeneratedBody(data.compose_result?.body || '');
-    setGeneratedSubject(data.compose_result?.subject || `Re: ${email.subject}`);
-    setShowPreview(true);
+    const started = performance.now();
+    console.log('[Generate] POST /api/compose', { tone, fromId, replyToEmailId: email.id, promptLength: p.length });
+    try {
+      const res = await fetch('/api/compose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: p, tone, from_connection_id: fromId, reply_to_email_id: email.id, send_immediately: false }),
+      });
+      const data = await res.json();
+      const ms = Math.round(performance.now() - started);
+      console.log(`[Generate] ${res.status} ${res.ok ? 'OK' : 'FAIL'} in ${ms}ms`, data);
+      setGenerating(false);
+      if (data.error) { setReplyError(data.error); return; }
+      setGeneratedBody(data.compose_result?.body || '');
+      setGeneratedSubject(data.compose_result?.subject || `Re: ${email.subject}`);
+      setShowPreview(true);
+    } catch (err) {
+      const ms = Math.round(performance.now() - started);
+      console.error(`[Generate] network error after ${ms}ms`, err);
+      setGenerating(false);
+      setReplyError((err as Error).message);
+    }
   }
 
   async function handleSend() {
+    // Two paths:
+    //   - showPreview=true  → user reviewed an AI draft, send that verbatim
+    //   - showPreview=false → user typed the reply themselves, send as-is
+    const bodyToSend = showPreview ? generatedBody : prompt;
+    const subjectToSend = showPreview ? generatedSubject : undefined;
+
+    if (!bodyToSend.trim()) {
+      setReplyError('Write a reply or generate a draft before sending.');
+      return;
+    }
+
     setSending(true);
     setReplyError('');
-    const useEditedContent = showPreview;
     const res = await fetch('/api/compose', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        prompt: useEditedContent ? `[Edited] Subject: ${generatedSubject}\n\n${generatedBody}` : prompt,
+        // Always send verbatim — the AI has either already produced this or the
+        // user wrote it themselves. Either way we don't want another rewrite.
+        body_override: bodyToSend,
+        subject: subjectToSend,
+        prompt: '',
         tone, from_connection_id: fromId, reply_to_email_id: email.id, send_immediately: true,
       }),
     });
@@ -94,6 +119,8 @@ export default function EmailDetailPanel({ email, connections, onClose, autoOpen
     setReplying(false);
     setShowPreview(false);
     setPrompt('');
+    setGeneratedBody('');
+    setGeneratedSubject('');
   }
 
   const fromConn = connections.find((c) => c.id === fromId);
@@ -201,18 +228,21 @@ export default function EmailDetailPanel({ email, connections, onClose, autoOpen
                 {!showPreview && (
                   <div className="px-3.5 py-3 border-b border-border">
                     <div className="flex items-center justify-between mb-1.5">
-                      <p className="text-xs font-medium text-muted-foreground">Describe your reply</p>
+                      <p className="text-xs font-medium text-muted-foreground">Write your reply — or describe it for AI</p>
                       <VoiceRecorder fromConnectionId={fromId} onTranscript={(t) => { setPrompt(t); handleGenerate(t); }} disabled={!fromId} />
                     </div>
                     <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)}
-                      placeholder={`e.g. "Tell them the quotation will be ready by Friday"`}
-                      rows={3} className="w-full text-sm bg-transparent focus:outline-none resize-none text-foreground placeholder-muted-foreground leading-relaxed" />
+                      placeholder={`Write the actual reply, or describe it like "Tell them the quote will be ready Friday"`}
+                      rows={4} className="w-full text-sm bg-transparent focus:outline-none resize-none text-foreground placeholder-muted-foreground leading-relaxed" />
+                    <p className="text-[11px] text-muted-foreground mt-1.5 leading-relaxed">
+                      <Sparkles className="w-3 h-3 inline mr-1 -mt-0.5" /><strong className="text-foreground/80">Generate</strong> turns your text into an AI draft you can edit. <strong className="text-foreground/80">Send Reply</strong> sends what you typed, as-is.
+                    </p>
                   </div>
                 )}
                 {replyError && <p className="px-3.5 py-2 text-xs text-red-500 bg-red-50 dark:bg-red-900/20 border-b border-border">{replyError}</p>}
                 {/* Actions */}
                 <div className="px-3.5 py-2.5 bg-muted/20 flex items-center justify-between gap-2">
-                  <button onClick={() => { setReplying(false); setShowPreview(false); setPrompt(''); }}
+                  <button onClick={() => { setReplying(false); setShowPreview(false); setPrompt(''); setGeneratedBody(''); setGeneratedSubject(''); }}
                     className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
                   <div className="flex gap-2">
                     {!showPreview && (
@@ -227,8 +257,14 @@ export default function EmailDetailPanel({ email, connections, onClose, autoOpen
                         <RefreshCw className={`w-3.5 h-3.5 ${generating ? 'animate-spin' : ''}`} /> Regenerate
                       </button>
                     )}
-                    <button onClick={handleSend} disabled={sending || (!showPreview && !prompt.trim())}
-                      className="flex items-center gap-1.5 bg-primary hover:bg-primary/90 disabled:opacity-50 text-primary-foreground text-sm font-medium rounded-lg px-3.5 py-1.5 transition-all">
+                    {/* Send sends either the reviewed AI draft (when preview is open)
+                        or the raw text the user typed (when no preview) — verbatim either way. */}
+                    <button
+                      onClick={handleSend}
+                      disabled={sending || (showPreview ? !generatedBody.trim() : !prompt.trim()) || !fromId}
+                      title={showPreview ? 'Send the reviewed draft' : 'Send your typed reply as-is'}
+                      className="flex items-center gap-1.5 bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed text-primary-foreground text-sm font-medium rounded-lg px-3.5 py-1.5 transition-all"
+                    >
                       {sending ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Sending...</> : <><Reply className="w-3.5 h-3.5" /> Send Reply</>}
                     </button>
                   </div>

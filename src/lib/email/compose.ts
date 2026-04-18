@@ -20,13 +20,33 @@ export async function composeAndSend(
     return { error: 'Selected email account not found. Please reconnect it in Settings.' };
   }
 
-  const tone: EmailTone = request.tone || detectToneFromPrompt(request.prompt);
+  const tone: EmailTone = request.tone || detectToneFromPrompt(request.prompt || '');
 
   try {
     let composedContent;
 
-    // 2. If this is a reply to an existing email, load it for context
-    if (request.reply_to_email_id) {
+    // 2a. body_override — user typed the body themselves (or reviewed an AI draft
+    //     and is sending verbatim). Skip the AI entirely so we don't rewrite the
+    //     text they just confirmed.
+    if (request.body_override && request.body_override.trim()) {
+      let subject = request.subject;
+      let to = request.to || '';
+
+      if (request.reply_to_email_id) {
+        const originalEmail = await getEmailById(request.reply_to_email_id, userId);
+        if (!originalEmail) return { error: 'Original email not found.' };
+        subject = subject || (originalEmail.subject.startsWith('Re:') ? originalEmail.subject : `Re: ${originalEmail.subject}`);
+        to = originalEmail.sender;
+      }
+
+      composedContent = {
+        subject: subject || '(No Subject)',
+        body: request.body_override,
+        to,
+        cc: request.cc,
+      };
+    } else if (request.reply_to_email_id) {
+      // 2b. Reply via AI — load original for context
       const originalEmail = await getEmailById(request.reply_to_email_id, userId);
       if (!originalEmail) return { error: 'Original email not found.' };
 
@@ -44,7 +64,7 @@ export async function composeAndSend(
       // Ensure reply goes back to the original sender
       composedContent.to = originalEmail.sender;
     } else {
-      // 3. Compose a brand new email
+      // 3. Compose a brand new email via AI
       composedContent = await composeEmail({
         prompt: request.prompt,
         tone,
@@ -79,7 +99,14 @@ export async function composeAndSend(
       sent: false,
     };
 
-    // 5. If send_immediately, send via the provider
+    // 5. If send_immediately, send via the provider.
+    //    Safety net: never ship an empty-body email. If the AI comes back with
+    //    no body (or only whitespace), fail loudly so the client shows an error
+    //    instead of silently sending a blank message.
+    if (request.send_immediately && !composedContent.body.trim()) {
+      await updateComposedEmailStatus(draft.id, 'failed', { error_message: 'Empty body — nothing to send.' });
+      return { error: "The draft came back empty. Click Generate and review the draft before sending." };
+    }
     if (request.send_immediately) {
       if (connection.provider === 'gmail') {
         const accessToken = await getValidAccessToken(connection);

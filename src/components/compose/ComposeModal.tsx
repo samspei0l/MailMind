@@ -72,25 +72,36 @@ export default function ComposeModal({
       send_immediately: false,
     };
 
-    const res = await fetch('/api/compose', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json();
-    setGenerating(false);
+    const started = performance.now();
+    console.log('[Generate] POST /api/compose', { tone, fromId, replyToEmailId: replyTo?.id, promptLength: prompt.length });
+    try {
+      const res = await fetch('/api/compose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      const ms = Math.round(performance.now() - started);
+      console.log(`[Generate] ${res.status} ${res.ok ? 'OK' : 'FAIL'} in ${ms}ms`, data);
+      setGenerating(false);
 
-    if (data.error) {
-      setError(data.error);
-      return;
+      if (data.error) {
+        setError(data.error);
+        return;
+      }
+
+      const result: ComposeResult = data.compose_result;
+      setGenerated(result);
+      setEditSubject(result.subject);
+      setEditBody(result.body);
+      setEditTo(result.to);
+      setMode('preview');
+    } catch (err) {
+      const ms = Math.round(performance.now() - started);
+      console.error(`[Generate] network error after ${ms}ms`, err);
+      setGenerating(false);
+      setError((err as Error).message);
     }
-
-    const result: ComposeResult = data.compose_result;
-    setGenerated(result);
-    setEditSubject(result.subject);
-    setEditBody(result.body);
-    setEditTo(result.to);
-    setMode('preview');
   }, [prompt, tone, fromId, to, subject, replyTo]);
 
   // ── Send ────────────────────────────────────────────────────

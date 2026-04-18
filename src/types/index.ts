@@ -73,6 +73,7 @@ export interface Email {
   is_starred: boolean;
   labels: string[] | null;
   received_at: string;
+  direction: 'received' | 'sent';
   // AI enrichment
   summary: string | null;
   priority: EmailPriority | null;
@@ -158,7 +159,7 @@ export interface VoiceTranscription {
 // COMPOSE REQUEST (from UI -> API)
 // ============================================================
 export interface ComposeRequest {
-  prompt: string;               // Natural language or voice transcript
+  prompt: string;               // Natural language or voice transcript (ignored when body_override is set)
   tone?: EmailTone;
   from_connection_id: string;   // Which account to send from
   to?: string;                  // Can be omitted if in prompt
@@ -166,6 +167,10 @@ export interface ComposeRequest {
   subject?: string;             // AI-generated if omitted
   reply_to_email_id?: string;   // Set when replying to existing email
   send_immediately?: boolean;
+  // Bypass the AI and use this exact text as the body. Used when the user
+  // types their reply directly (no Generate step) or edits the AI draft and
+  // sends it verbatim — the AI must not rewrite what they reviewed.
+  body_override?: string;
 }
 
 export interface ComposeResult {
@@ -193,6 +198,7 @@ export interface EmailFilters {
   date_to?: string;
   search?: string;
   connection_id?: string;       // Filter by specific account
+  direction?: 'received' | 'sent';
   limit?: number;
 }
 

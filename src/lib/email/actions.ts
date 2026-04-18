@@ -1,4 +1,4 @@
-import { getEmailsByFilters, upsertEmails, updateEmailAI, logEmailReply, updateLastSync, getEmailConnection, getAllEmailConnections } from '@/lib/supabase/db';
+import { getEmailsByFilters, upsertEmails, updateEmailAI, logEmailReply, updateLastSync, getEmailConnection, getAllEmailConnections, getExistingMessageIds } from '@/lib/supabase/db';
 import { enrichEmail, generateEmailReply, generateDailySummary } from '@/lib/ai/openai';
 import { fetchGmailMessages, sendGmailReply } from '@/lib/email/gmail';
 import type { Email, EmailFilters, EmailConnection, ActionResult, ReplyAction, SummaryAction } from '@/types';
@@ -27,18 +27,29 @@ export async function syncEmailsForConnection(
   userId: string,
   connection: EmailConnection,
   maxResults = 50,
-): Promise<{ synced: number; enriched: number; error?: string }> {
+): Promise<{ synced: number; newEmails: number; enriched: number; error?: string }> {
   try {
-    const { messages } = await fetchGmailMessages(
-      connection.access_token,
-      connection.refresh_token || '',
-      { maxResults }
-    );
+    // Pull received + sent in parallel so the History page can show full threads
+    const [inboxRes, sentRes] = await Promise.all([
+      fetchGmailMessages(connection.access_token, connection.refresh_token || '', { maxResults, query: 'in:inbox' }),
+      fetchGmailMessages(connection.access_token, connection.refresh_token || '', { maxResults, query: 'in:sent' }),
+    ]);
+
+    const messages = [
+      ...inboxRes.messages.map((m) => ({ ...m, direction: 'received' as const })),
+      ...sentRes.messages.map((m) => ({ ...m, direction: 'sent' as const })),
+    ];
 
     if (messages.length === 0) {
       await updateLastSync(connection.id);
-      return { synced: 0, enriched: 0 };
+      return { synced: 0, newEmails: 0, enriched: 0 };
     }
+
+    // Count genuinely new messages before upsert. Gmail always returns the
+    // latest N — without this check `synced` would be N every time and we
+    // couldn't tell the user "you're already up to date."
+    const existingIds = await getExistingMessageIds(userId, messages.map((m) => m.messageId));
+    const newEmails = messages.filter((m) => !existingIds.has(m.messageId)).length;
 
     const emailRecords = messages.map((m) => ({
       user_id: userId,
@@ -56,6 +67,7 @@ export async function syncEmailsForConnection(
       is_starred: m.isStarred,
       labels: m.labels,
       received_at: m.receivedAt.toISOString(),
+      direction: m.direction,
     }));
 
     const saved = await upsertEmails(emailRecords);
@@ -63,8 +75,9 @@ export async function syncEmailsForConnection(
 
     // Enrich emails that haven't been processed yet. Capped at 5 per sync and
     // run in parallel — withRetry() backs off on 429 if NVIDIA rate-limits us.
+    // Sent emails skip enrichment (no need to categorize your own outgoing).
     const unenrichedEmails = (saved || [])
-      .filter((e: Email) => !e.ai_processed_at && e.body)
+      .filter((e: Email) => !e.ai_processed_at && e.body && e.direction !== 'sent')
       .slice(0, 5);
 
     const results = await Promise.allSettled(
@@ -78,24 +91,24 @@ export async function syncEmailsForConnection(
       if (r.status === 'rejected') console.error(`Enrichment failed for email ${unenrichedEmails[i].id}:`, r.reason);
     });
 
-    return { synced: messages.length, enriched };
+    return { synced: messages.length, newEmails, enriched };
   } catch (error) {
-    return { synced: 0, enriched: 0, error: (error as Error).message };
+    return { synced: 0, newEmails: 0, enriched: 0, error: (error as Error).message };
   }
 }
 
-export async function syncEmails(userId: string, maxResults = 50): Promise<{ synced: number; enriched: number; error?: string }> {
+export async function syncEmails(userId: string, maxResults = 50): Promise<{ synced: number; newEmails: number; enriched: number; error?: string }> {
   const connection = await getEmailConnection(userId, 'gmail');
-  if (!connection) return { synced: 0, enriched: 0, error: 'No Gmail connection found. Please connect your Gmail account.' };
+  if (!connection) return { synced: 0, newEmails: 0, enriched: 0, error: 'No Gmail connection found. Please connect your Gmail account.' };
   return syncEmailsForConnection(userId, connection, maxResults);
 }
 
 // Sync every active connection in parallel. Used by the "Sync All Inboxes"
 // button so users with multiple accounts pull them all in one click.
-export async function syncAllEmails(userId: string, maxResults = 50): Promise<{ synced: number; enriched: number; accounts: number; error?: string }> {
+export async function syncAllEmails(userId: string, maxResults = 50): Promise<{ synced: number; newEmails: number; enriched: number; accounts: number; error?: string }> {
   const connections = await getAllEmailConnections(userId);
   if (connections.length === 0) {
-    return { synced: 0, enriched: 0, accounts: 0, error: 'No email accounts connected.' };
+    return { synced: 0, newEmails: 0, enriched: 0, accounts: 0, error: 'No email accounts connected.' };
   }
 
   const results = await Promise.allSettled(
@@ -103,11 +116,13 @@ export async function syncAllEmails(userId: string, maxResults = 50): Promise<{ 
   );
 
   let synced = 0;
+  let newEmails = 0;
   let enriched = 0;
   const errors: string[] = [];
   for (const r of results) {
     if (r.status === 'fulfilled') {
       synced += r.value.synced;
+      newEmails += r.value.newEmails;
       enriched += r.value.enriched;
       if (r.value.error) errors.push(r.value.error);
     } else {
@@ -115,7 +130,7 @@ export async function syncAllEmails(userId: string, maxResults = 50): Promise<{ 
     }
   }
 
-  return { synced, enriched, accounts: connections.length, error: errors.length ? errors.join('; ') : undefined };
+  return { synced, newEmails, enriched, accounts: connections.length, error: errors.length ? errors.join('; ') : undefined };
 }
 
 // ============================================================

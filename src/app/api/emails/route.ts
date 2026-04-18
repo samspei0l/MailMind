@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
     date_from: searchParams.get('date_from') || undefined,
     date_to: searchParams.get('date_to') || undefined,
     search: searchParams.get('search') || undefined,
+    direction: (searchParams.get('direction') as EmailFilters['direction']) || 'received',
     limit: searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : 50,
   };
 

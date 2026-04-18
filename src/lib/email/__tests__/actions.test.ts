@@ -57,6 +57,7 @@ function makeEmail(overrides: Partial<Email> = {}): Email {
     is_starred: false,
     labels: ['INBOX'],
     received_at: new Date().toISOString(),
+    direction: 'received',
     summary: null,
     priority: null,
     category: null,

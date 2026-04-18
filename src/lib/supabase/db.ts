@@ -124,12 +124,27 @@ export async function upsertEmails(emails: Partial<Email>[]) {
   return data;
 }
 
+// Return the subset of messageIds that already exist for this user.
+// Used by sync to distinguish genuinely new emails from re-fetched ones, so
+// the UI can say "already up to date" when nothing new arrived.
+export async function getExistingMessageIds(userId: string, messageIds: string[]): Promise<Set<string>> {
+  if (messageIds.length === 0) return new Set();
+  const { data, error } = await supabase
+    .from('emails')
+    .select('message_id')
+    .eq('user_id', userId)
+    .in('message_id', messageIds);
+  if (error) throw new Error(`getExistingMessageIds: ${error.message}`);
+  return new Set((data || []).map((r: { message_id: string }) => r.message_id));
+}
+
 export async function getEmailsByFilters(userId: string, filters: EmailFilters): Promise<Email[]> {
   let q = supabase.from('emails').select('*').eq('user_id', userId).order('received_at', { ascending: false });
   if (filters.priority) q = q.eq('priority', filters.priority);
   if (filters.category) q = q.eq('category', filters.category);
   if (filters.type) q = q.eq('type', filters.type);
   if (filters.connection_id) q = q.eq('connection_id', filters.connection_id);
+  if (filters.direction) q = q.eq('direction', filters.direction);
   if (filters.requires_reply !== undefined) q = q.eq('requires_reply', filters.requires_reply);
   if (filters.sender) q = q.ilike('sender', `%${filters.sender}%`);
   if (filters.date_from) q = q.gte('received_at', filters.date_from);
@@ -144,6 +159,65 @@ export async function getEmailsByFilters(userId: string, filters: EmailFilters):
 export async function getEmailById(id: string, userId: string): Promise<Email | null> {
   const { data } = await supabase.from('emails').select('*').eq('id', id).eq('user_id', userId).single();
   return data || null;
+}
+
+// History view — pulls recent emails (both directions) and groups by thread on
+// the server. Returning threads keeps the payload small and the UI simple.
+export async function getThreads(userId: string, limit = 200): Promise<Array<{
+  threadId: string;
+  subject: string;
+  messageCount: number;
+  lastMessageAt: string;
+  lastMessage: Email;
+  participants: string[];
+  hasSent: boolean;
+  hasReceived: boolean;
+}>> {
+  const { data, error } = await supabase
+    .from('emails')
+    .select('*')
+    .eq('user_id', userId)
+    .not('thread_id', 'is', null)
+    .order('received_at', { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`getThreads: ${error.message}`);
+
+  const byThread = new Map<string, Email[]>();
+  for (const e of (data || []) as Email[]) {
+    const tid = e.thread_id as string;
+    if (!byThread.has(tid)) byThread.set(tid, []);
+    byThread.get(tid)!.push(e);
+  }
+
+  const threads = Array.from(byThread.entries()).map(([threadId, msgs]) => {
+    const sorted = msgs.sort((a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime());
+    const last = sorted[0];
+    const participants = Array.from(new Set(sorted.flatMap((m) => [m.sender, m.recipient].filter(Boolean) as string[])));
+    return {
+      threadId,
+      subject: last.subject,
+      messageCount: sorted.length,
+      lastMessageAt: last.received_at,
+      lastMessage: last,
+      participants,
+      hasSent: sorted.some((m) => m.direction === 'sent'),
+      hasReceived: sorted.some((m) => m.direction === 'received'),
+    };
+  });
+
+  threads.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());
+  return threads;
+}
+
+export async function getThreadMessages(userId: string, threadId: string): Promise<Email[]> {
+  const { data, error } = await supabase
+    .from('emails')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('thread_id', threadId)
+    .order('received_at', { ascending: true });
+  if (error) throw new Error(`getThreadMessages: ${error.message}`);
+  return (data || []) as Email[];
 }
 
 export async function updateEmailAI(emailId: string, enrichment: Partial<Email>) {

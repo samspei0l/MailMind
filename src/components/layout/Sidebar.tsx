@@ -7,7 +7,7 @@ import type { User } from '@supabase/supabase-js';
 import type { EmailConnection, EmailTone } from '@/types';
 import {
   Inbox, MessageSquare, Settings, LogOut, Sparkles,
-  RefreshCw, ChevronRight, PenLine, Plus,
+  RefreshCw, ChevronRight, PenLine, Plus, History,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
@@ -16,8 +16,9 @@ import dynamic from 'next/dynamic';
 const ComposeModal = dynamic(() => import('@/components/compose/ComposeModal'), { ssr: false });
 
 const NAV_ITEMS = [
-  { href: '/dashboard/inbox', icon: Inbox, label: 'Inbox' },
-  { href: '/dashboard/chat',  icon: MessageSquare, label: 'Chat' },
+  { href: '/dashboard/inbox',   icon: Inbox, label: 'Inbox' },
+  { href: '/dashboard/chat',    icon: MessageSquare, label: 'Chat' },
+  { href: '/dashboard/history', icon: History, label: 'History' },
   { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
 ];
 
@@ -28,6 +29,8 @@ export default function Sidebar({ user }: { user: User }) {
   const router = useRouter();
   const supabase = createSupabaseClient();
   const [syncing, setSyncing] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
   const [composeOpen, setComposeOpen] = useState(false);
   const [connections, setConnections] = useState<Pick<EmailConnection, 'id' | 'email' | 'nickname' | 'color' | 'provider'>[]>([]);
 
@@ -39,14 +42,55 @@ export default function Sidebar({ user }: { user: User }) {
 
   async function handleSync() {
     setSyncing(true);
-    await fetch('/api/emails', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ maxResults: 50 }) });
-    setSyncing(false);
-    // If we're on the inbox page, let InboxClient refetch in place instead of
-    // invalidating every RSC segment with router.refresh() — much faster.
-    if (pathname.startsWith('/dashboard/inbox')) {
-      window.dispatchEvent(new CustomEvent('mailmind:sync-complete'));
-    } else {
-      router.refresh();
+    setSyncResult(null);
+    setProgress(5);
+
+    // Advance the bar asymptotically toward 90% while we wait on the server —
+    // gives the user a real sense of motion without claiming we know progress
+    // we don't have. The bar snaps to 100% as soon as the response lands.
+    const start = Date.now();
+    const tick = setInterval(() => {
+      const elapsed = Date.now() - start;
+      // Logistic-ish curve: quick at first, tapering toward 90%
+      const pct = Math.min(90, 90 * (1 - Math.exp(-elapsed / 8000)));
+      setProgress(pct);
+    }, 150);
+
+    try {
+      const res = await fetch('/api/emails', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ maxResults: 50 }),
+      });
+      const data = await res.json();
+      clearInterval(tick);
+      setProgress(100);
+
+      if (data.error) {
+        setSyncResult(`Sync failed: ${data.error}`);
+      } else if (data.newEmails === 0) {
+        setSyncResult("You're already up to date");
+      } else {
+        const parts: string[] = [];
+        if (typeof data.newEmails === 'number') parts.push(`${data.newEmails} new email${data.newEmails !== 1 ? 's' : ''}`);
+        if (typeof data.accounts === 'number') parts.push(`${data.accounts} account${data.accounts !== 1 ? 's' : ''}`);
+        setSyncResult(parts.length ? `Synced ${parts.join(' from ')}` : 'Sync complete');
+      }
+    } catch (err) {
+      clearInterval(tick);
+      setProgress(100);
+      setSyncResult(`Sync failed: ${(err as Error).message}`);
+    } finally {
+      // Let the 100% state linger briefly so the user registers completion,
+      // then clear the bar. The result line stays a bit longer.
+      setTimeout(() => { setSyncing(false); setProgress(0); }, 400);
+      setTimeout(() => setSyncResult(null), 4000);
+
+      if (pathname.startsWith('/dashboard/inbox')) {
+        window.dispatchEvent(new CustomEvent('mailmind:sync-complete'));
+      } else {
+        router.refresh();
+      }
     }
   }
 
@@ -83,7 +127,7 @@ export default function Sidebar({ user }: { user: User }) {
           </button>
         </div>
 
-        {/* Sync button */}
+        {/* Sync button + progress */}
         <div className="px-4 pb-3">
           <button
             onClick={handleSync}
@@ -93,6 +137,19 @@ export default function Sidebar({ user }: { user: User }) {
             <RefreshCw className={`w-3 h-3 ${syncing ? 'animate-spin' : ''}`} />
             {syncing ? 'Syncing...' : 'Sync All Inboxes'}
           </button>
+          {syncing && (
+            <div className="mt-2 h-1 w-full bg-blue-500/10 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-blue-400 rounded-full transition-[width] duration-200 ease-out"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          )}
+          {!syncing && syncResult && (
+            <p className="mt-2 text-[10px] text-slate-400 text-center truncate" title={syncResult}>
+              {syncResult}
+            </p>
+          )}
         </div>
 
         {/* Navigation */}

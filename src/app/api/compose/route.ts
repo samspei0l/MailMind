@@ -13,8 +13,8 @@ export async function POST(request: NextRequest) {
 
   const body: ComposeRequest = await request.json();
 
-  if (!body.prompt) {
-    return NextResponse.json({ error: 'prompt is required' }, { status: 400 });
+  if (!body.prompt && !body.body_override) {
+    return NextResponse.json({ error: 'prompt or body_override is required' }, { status: 400 });
   }
   if (!body.from_connection_id) {
     return NextResponse.json({ error: 'from_connection_id is required' }, { status: 400 });
