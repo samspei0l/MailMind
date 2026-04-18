@@ -39,12 +39,12 @@ export default function ChatInterface({ initialQuery, initialSessionId }: Props)
   const [sessionId, setSessionId] = useState<string | undefined>(initialSessionId);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Track which prefill we've already dispatched so that (a) React StrictMode's
+  // double-effect in dev doesn't send twice, and (b) clicking a new sidebar
+  // Quick Action while already on /dashboard/chat still fires the new query.
+  const lastAutoSentRef = useRef<string | null>(null);
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
-
-  useEffect(() => {
-    if (initialQuery) sendMessage(initialQuery);
-  }, []); // eslint-disable-line
 
   const sendMessage = useCallback(async (text?: string) => {
     const messageText = text || input;
@@ -104,6 +104,13 @@ export default function ChatInterface({ initialQuery, initialSessionId }: Props)
       setLoading(false);
     }
   }, [input, loading, sessionId]);
+
+  useEffect(() => {
+    if (!initialQuery) return;
+    if (lastAutoSentRef.current === initialQuery) return;
+    lastAutoSentRef.current = initialQuery;
+    sendMessage(initialQuery);
+  }, [initialQuery, sendMessage]);
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -208,6 +215,16 @@ export default function ChatInterface({ initialQuery, initialSessionId }: Props)
                     <div className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
                       <AlertCircle className="w-4 h-4 flex-shrink-0" />
                       {message.error}
+                    </div>
+                  )}
+
+                  {/* All-caught-up state for filter/search with 0 results */}
+                  {!message.error && !message.summary && message.action &&
+                   (message.action.action === 'filter' || message.action.action === 'search') &&
+                   (!message.emails || message.emails.length === 0) && (
+                    <div className="w-full flex items-center gap-2 text-sm text-muted-foreground bg-muted/40 border border-border rounded-xl px-3 py-2.5">
+                      <Sparkles className="w-4 h-4 flex-shrink-0 text-primary/70" />
+                      You&apos;re all caught up — no emails match this right now.
                     </div>
                   )}
 

@@ -20,7 +20,7 @@ export default async function InboxPage({
     type: searchParams.type as any,
     requires_reply: searchParams.requires_reply === 'true' ? true : searchParams.requires_reply === 'false' ? false : undefined,
     search: searchParams.search,
-    limit: 100,
+    limit: 50,
   };
 
   // Clean undefined

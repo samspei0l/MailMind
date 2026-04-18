@@ -1,4 +1,4 @@
-import { getEmailsByFilters, upsertEmails, updateEmailAI, logEmailReply, updateLastSync, getEmailConnection } from '@/lib/supabase/db';
+import { getEmailsByFilters, upsertEmails, updateEmailAI, logEmailReply, updateLastSync, getEmailConnection, getAllEmailConnections } from '@/lib/supabase/db';
 import { enrichEmail, generateEmailReply, generateDailySummary } from '@/lib/ai/openai';
 import { fetchGmailMessages, sendGmailReply } from '@/lib/email/gmail';
 import type { Email, EmailFilters, EmailConnection, ActionResult, ReplyAction, SummaryAction } from '@/types';
@@ -61,26 +61,22 @@ export async function syncEmailsForConnection(
     const saved = await upsertEmails(emailRecords);
     await updateLastSync(connection.id);
 
-    // Enrich emails that haven't been processed yet.
-    // Capped at 5 per sync and throttled to ~8s apart to respect the
-    // OpenRouter free tier limit of 8 requests/minute.
+    // Enrich emails that haven't been processed yet. Capped at 5 per sync and
+    // run in parallel — withRetry() backs off on 429 if NVIDIA rate-limits us.
     const unenrichedEmails = (saved || [])
       .filter((e: Email) => !e.ai_processed_at && e.body)
       .slice(0, 5);
 
-    let enriched = 0;
-    for (const email of unenrichedEmails) {
-      try {
+    const results = await Promise.allSettled(
+      unenrichedEmails.map(async (email) => {
         const result = await enrichEmail(email.body || email.snippet || '', email.subject, email.sender);
         await updateEmailAI(email.id, result);
-        enriched++;
-        if (enriched < unenrichedEmails.length) {
-          await new Promise((r) => setTimeout(r, 8000));
-        }
-      } catch (err) {
-        console.error(`Enrichment failed for email ${email.id}:`, err);
-      }
-    }
+      })
+    );
+    const enriched = results.filter((r) => r.status === 'fulfilled').length;
+    results.forEach((r, i) => {
+      if (r.status === 'rejected') console.error(`Enrichment failed for email ${unenrichedEmails[i].id}:`, r.reason);
+    });
 
     return { synced: messages.length, enriched };
   } catch (error) {
@@ -92,6 +88,34 @@ export async function syncEmails(userId: string, maxResults = 50): Promise<{ syn
   const connection = await getEmailConnection(userId, 'gmail');
   if (!connection) return { synced: 0, enriched: 0, error: 'No Gmail connection found. Please connect your Gmail account.' };
   return syncEmailsForConnection(userId, connection, maxResults);
+}
+
+// Sync every active connection in parallel. Used by the "Sync All Inboxes"
+// button so users with multiple accounts pull them all in one click.
+export async function syncAllEmails(userId: string, maxResults = 50): Promise<{ synced: number; enriched: number; accounts: number; error?: string }> {
+  const connections = await getAllEmailConnections(userId);
+  if (connections.length === 0) {
+    return { synced: 0, enriched: 0, accounts: 0, error: 'No email accounts connected.' };
+  }
+
+  const results = await Promise.allSettled(
+    connections.map((c) => syncEmailsForConnection(userId, c, maxResults))
+  );
+
+  let synced = 0;
+  let enriched = 0;
+  const errors: string[] = [];
+  for (const r of results) {
+    if (r.status === 'fulfilled') {
+      synced += r.value.synced;
+      enriched += r.value.enriched;
+      if (r.value.error) errors.push(r.value.error);
+    } else {
+      errors.push((r.reason as Error).message);
+    }
+  }
+
+  return { synced, enriched, accounts: connections.length, error: errors.length ? errors.join('; ') : undefined };
 }
 
 // ============================================================

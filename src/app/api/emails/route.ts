@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
-import { syncEmails, getEmails } from '@/lib/email/actions';
+import { syncAllEmails, getEmails } from '@/lib/email/actions';
 import type { EmailFilters } from '@/types';
 
 // GET /api/emails - list emails with filters
@@ -41,6 +41,6 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const maxResults = body.maxResults || 50;
 
-  const result = await syncEmails(user.id, maxResults);
+  const result = await syncAllEmails(user.id, maxResults);
   return NextResponse.json(result);
 }

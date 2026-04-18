@@ -41,7 +41,13 @@ export default function Sidebar({ user }: { user: User }) {
     setSyncing(true);
     await fetch('/api/emails', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ maxResults: 50 }) });
     setSyncing(false);
-    router.refresh();
+    // If we're on the inbox page, let InboxClient refetch in place instead of
+    // invalidating every RSC segment with router.refresh() — much faster.
+    if (pathname.startsWith('/dashboard/inbox')) {
+      window.dispatchEvent(new CustomEvent('mailmind:sync-complete'));
+    } else {
+      router.refresh();
+    }
   }
 
   async function handleLogout() {
@@ -138,13 +144,16 @@ export default function Sidebar({ user }: { user: User }) {
         <div className="px-4 pb-3">
           <p className="text-xs font-medium text-slate-600 uppercase tracking-wider py-2">Quick Actions</p>
           {[
-            'Show urgent emails',
-            'Summarise yesterday',
-            'Show quotation emails',
+            { label: 'Show urgent emails',         query: 'Show all high priority emails' },
+            { label: 'Follow-ups needed',          query: 'Show quotation and invoice emails that are waiting for a reply' },
+            { label: 'Emails needing reply',       query: 'Show emails that need a reply' },
+            { label: "Today's summary",            query: "Summarise today's emails" },
+            { label: "This week's summary",        query: "Give me a summary of this week's emails" },
+            { label: 'Show complaints',            query: 'Show all complaint emails' },
           ].map((p) => (
-            <Link key={p} href={`/dashboard/chat?q=${encodeURIComponent(p)}`}
+            <Link key={p.label} href={`/dashboard/chat?q=${encodeURIComponent(p.query)}`}
               className="block text-xs text-slate-500 hover:text-slate-300 hover:bg-white/5 rounded px-2 py-1.5 transition-all truncate">
-              → {p}
+              → {p.label}
             </Link>
           ))}
         </div>

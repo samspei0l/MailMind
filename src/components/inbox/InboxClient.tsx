@@ -62,6 +62,14 @@ export default function InboxClient({ initialEmails, initialFilters }: Props) {
     setLoading(false);
   }, []);
 
+  // Refetch emails when the sidebar's "Sync All Inboxes" finishes — avoids a
+  // full router.refresh() which would invalidate every RSC segment on the page.
+  useEffect(() => {
+    const handler = () => { applyFilters(filters); };
+    window.addEventListener('mailmind:sync-complete', handler);
+    return () => window.removeEventListener('mailmind:sync-complete', handler);
+  }, [applyFilters, filters]);
+
   function clearFilter(key: keyof EmailFilters) {
     const nf = { ...filters };
     delete nf[key];
