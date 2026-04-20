@@ -13,6 +13,7 @@ export async function GET() {
   // Strip sensitive tokens before sending to client
   const safe = connections.map(({ access_token, refresh_token, ...rest }) => rest);
   return NextResponse.json({ connections: safe });
+  // signature + signature_extracted_at pass through — the composer needs them to decide whether to show the toggle.
 }
 
 // PATCH /api/connections — update nickname

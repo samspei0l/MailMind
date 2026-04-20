@@ -86,6 +86,8 @@ function makeConnection(overrides: Partial<EmailConnection> = {}): EmailConnecti
     token_expiry: null,
     is_active: true,
     last_sync_at: null,
+    signature: null,
+    signature_extracted_at: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,

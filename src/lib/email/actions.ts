@@ -82,7 +82,7 @@ export async function syncEmailsForConnection(
 
     const results = await Promise.allSettled(
       unenrichedEmails.map(async (email) => {
-        const result = await enrichEmail(email.body || email.snippet || '', email.subject, email.sender);
+        const result = await enrichEmail(userId, email.body || email.snippet || '', email.subject, email.sender);
         await updateEmailAI(email.id, result);
       })
     );
@@ -156,7 +156,7 @@ export async function sendReply(
   for (const email of emails) {
     try {
       // Generate professional reply
-      const replyBody = await generateEmailReply(action.message, {
+      const replyBody = await generateEmailReply(userId, action.message, {
         subject: email.subject,
         sender: email.sender,
         body: email.body || email.snippet || '',
@@ -250,6 +250,6 @@ export async function getSummary(userId: string, action: SummaryAction): Promise
     priority: e.priority || 'LOW',
   }));
 
-  const summary = await generateDailySummary(summaryEmails);
+  const summary = await generateDailySummary(userId, summaryEmails);
   return { emails, summary };
 }

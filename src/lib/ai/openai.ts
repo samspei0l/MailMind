@@ -1,23 +1,26 @@
 import OpenAI from 'openai';
 import type { AIEmailEnrichment, ActionPayload, ActionResult, EmailTone } from '@/types';
 import { TONE_LABELS } from '@/types';
+import { chatComplete } from './client';
 
-const zai = new OpenAI({
-  apiKey: process.env.NVIDIA_API_KEY,
-  baseURL: 'https://integrate.api.nvidia.com/v1',
-});
-
-const MODEL = 'google/gemma-3n-e2b-it';
+// ============================================================
+// EVERY function in this file now takes `userId` as its first
+// argument. The AI call is routed through the per-user client
+// (see ./client.ts) which reads the user's provider + key from
+// the profiles table. MailMind no longer runs any shared LLM
+// spend — each tester brings their own key at signup.
+//
+// Whisper is the exception: speech-to-text still uses the
+// operator-supplied OPENAI_WHISPER_KEY because not every
+// supported provider offers Whisper. If a user picks a non-OpenAI
+// LLM and the operator hasn't set OPENAI_WHISPER_KEY, voice is
+// unavailable and we surface a friendly error.
+// ============================================================
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Helpers — JSON extraction from model output
 // ---------------------------------------------------------------------------
 
-function getText(response: OpenAI.Chat.ChatCompletion): string {
-  return response.choices[0]?.message?.content ?? '';
-}
-
-// Extract JSON from a response that may contain markdown code fences
 function extractJson(text: string): string {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenced) return fenced[1].trim();
@@ -26,62 +29,37 @@ function extractJson(text: string): string {
   return text.trim();
 }
 
-// Retry wrapper — handles 429 rate limits
-async function withRetry<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      return await fn();
-    } catch (err: unknown) {
-      const isRateLimit =
-        err instanceof OpenAI.APIError && err.status === 429;
-      if (!isRateLimit || attempt === retries) throw err;
-      const delay = 10000 * (attempt + 1); // 10s, 20s, 30s
-      await new Promise((r) => setTimeout(r, delay));
-    }
-  }
-  throw new Error('Unreachable');
-}
-
 // ---------------------------------------------------------------------------
 // EMAIL ENRICHMENT
 // ---------------------------------------------------------------------------
-export async function enrichEmail(emailBody: string, subject: string, sender: string): Promise<AIEmailEnrichment> {
-  const response = await withRetry(() => zai.chat.completions.create({
-    model: MODEL,
-    max_tokens: 1024,
-    messages: [
-      {
-        role: 'system',
-        content: 'Executive email assistant. Return ONLY valid JSON — no explanation, no markdown.',
-      },
-      {
-        role: 'user',
-        content: `Analyze this email and return JSON with exactly these fields:
+export async function enrichEmail(
+  userId: string,
+  emailBody: string,
+  subject: string,
+  sender: string,
+): Promise<AIEmailEnrichment> {
+  const text = await chatComplete(userId, {
+    system: 'Executive email assistant. Return ONLY valid JSON — no explanation, no markdown.',
+    user: `Analyze this email and return JSON with exactly these fields:
 {"summary":"2-3 sentences","priority":"HIGH|MEDIUM|LOW","category":"Sales|Client|Internal|Finance|Marketing|Other","type":"New Request|Reply Received|Quotation|Complaint|Update|Other","requires_reply":true|false,"intent":"...","suggested_reply":"..."}
 
 From: ${sender}
 Subject: ${subject}
 Body: ${emailBody.substring(0, 3000)}`,
-      },
-    ],
-  }));
-  return JSON.parse(extractJson(getText(response))) as AIEmailEnrichment;
+    maxTokens: 1024,
+  });
+  return JSON.parse(extractJson(text)) as AIEmailEnrichment;
 }
 
 // ---------------------------------------------------------------------------
 // INTENT PARSING — natural language → structured action
 // ---------------------------------------------------------------------------
-export async function parseUserIntent(userMessage: string): Promise<ActionPayload> {
+export async function parseUserIntent(userId: string, userMessage: string): Promise<ActionPayload> {
   const today = new Date().toISOString().split('T')[0];
   const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
 
-  const response = await withRetry(() => zai.chat.completions.create({
-    model: MODEL,
-    max_tokens: 512,
-    messages: [
-      {
-        role: 'system',
-        content: `Convert email commands to JSON. Today: ${today}. Yesterday: ${yesterday}.
+  const text = await chatComplete(userId, {
+    system: `Convert email commands to JSON. Today: ${today}. Yesterday: ${yesterday}.
 Return ONE of:
 1. Filter:  {"action":"filter","filters":{"priority"?,"category"?,"type"?,"requires_reply"?,"sender"?,"date_from"?,"date_to"?,"search"?,"limit"?}}
 2. Reply:   {"action":"reply","filters":{...},"message":"...","tone"?:"professional|friendly|formal|assertive|concise|apologetic|persuasive"}
@@ -89,13 +67,12 @@ Return ONE of:
 4. Search:  {"action":"search","query":"..."}
 5. Compose: {"action":"compose","prompt":"...","to"?:"email","tone"?:"professional|friendly|..."}
 Return ONLY the JSON object. No markdown, no explanation.`,
-      },
-      { role: 'user', content: userMessage },
-    ],
-  }));
+    user: userMessage,
+    maxTokens: 512,
+  });
 
   try {
-    return JSON.parse(extractJson(getText(response))) as ActionPayload;
+    return JSON.parse(extractJson(text)) as ActionPayload;
   } catch {
     return { action: 'search', query: userMessage };
   }
@@ -111,7 +88,7 @@ export interface ComposedEmailContent {
   cc?: string;
 }
 
-export async function composeEmail(options: {
+export async function composeEmail(userId: string, options: {
   prompt: string;
   tone: EmailTone;
   fromEmail: string;
@@ -136,16 +113,13 @@ Return ONLY JSON: {"subject":"generated subject","body":"full email body","to":"
     ? `Instruction: "${prompt}"\n\nOriginal email:\nFrom: ${replyContext.originalSender}\nSubject: ${replyContext.originalSubject}\nBody: ${replyContext.originalBody.substring(0, 2000)}`
     : `Instruction: "${prompt}"${subject ? `\nSubject hint: ${subject}` : ''}${to ? `\nRecipient: ${to}` : ''}`;
 
-  const response = await withRetry(() => zai.chat.completions.create({
-    model: MODEL,
-    max_tokens: 2048,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userContent },
-    ],
-  }));
+  const text = await chatComplete(userId, {
+    system: systemPrompt,
+    user: userContent,
+    maxTokens: 2048,
+  });
 
-  const parsed = JSON.parse(extractJson(getText(response)));
+  const parsed = JSON.parse(extractJson(text));
   return {
     subject: parsed.subject || 'No Subject',
     body: parsed.body || '',
@@ -158,34 +132,26 @@ Return ONLY JSON: {"subject":"generated subject","body":"full email body","to":"
 // REPLY GENERATION — for existing emails (action handler)
 // ---------------------------------------------------------------------------
 export async function generateEmailReply(
+  userId: string,
   instruction: string,
   original: { subject: string; sender: string; body: string },
   tone: EmailTone = 'professional',
 ): Promise<string> {
   const toneDesc = TONE_LABELS[tone]?.description || 'professional';
 
-  const response = await withRetry(() => zai.chat.completions.create({
-    model: MODEL,
-    max_tokens: 1024,
-    messages: [
-      {
-        role: 'system',
-        content: `Write email replies. Tone: ${tone} (${toneDesc}). Body only — no subject line. Sign off appropriately.`,
-      },
-      {
-        role: 'user',
-        content: `Instruction: "${instruction}"\n\nOriginal:\nFrom: ${original.sender}\nSubject: ${original.subject}\nBody: ${original.body.substring(0, 2000)}`,
-      },
-    ],
-  }));
+  const text = await chatComplete(userId, {
+    system: `Write email replies. Tone: ${tone} (${toneDesc}). Body only — no subject line. Sign off appropriately.`,
+    user: `Instruction: "${instruction}"\n\nOriginal:\nFrom: ${original.sender}\nSubject: ${original.subject}\nBody: ${original.body.substring(0, 2000)}`,
+    maxTokens: 1024,
+  });
 
-  return getText(response) || 'Thank you for your email. I will get back to you shortly.';
+  return text || 'Thank you for your email. I will get back to you shortly.';
 }
 
 // ---------------------------------------------------------------------------
-// VOICE TRANSCRIPTION
-// Z_AI does not support audio. Set OPENAI_WHISPER_KEY in .env.local
-// to enable voice features with OpenAI Whisper.
+// VOICE TRANSCRIPTION (Whisper)
+// Uses the operator's OPENAI_WHISPER_KEY — Whisper isn't covered by
+// every LLM provider. If unset, voice features return a clear error.
 // ---------------------------------------------------------------------------
 export async function transcribeVoice(audioBuffer: Buffer, mimeType: string): Promise<{ transcript: string; duration: number }> {
   const whisperKey = process.env.OPENAI_WHISPER_KEY;
@@ -205,39 +171,58 @@ export async function transcribeVoice(audioBuffer: Buffer, mimeType: string): Pr
 // CHAT RESPONSE
 // ---------------------------------------------------------------------------
 export async function generateChatResponse(
+  userId: string,
   userMessage: string,
   actionResult: ActionResult,
   actionPayload: ActionPayload,
 ): Promise<string> {
-  const response = await withRetry(() => zai.chat.completions.create({
-    model: MODEL,
-    max_tokens: 256,
-    messages: [
-      {
-        role: 'system',
-        content: 'Helpful AI email assistant. Give a friendly 1-2 sentence response. Be specific about what was done.',
-      },
-      {
-        role: 'user',
-        content: `User: "${userMessage}"\nResult: ${JSON.stringify({
-          action: actionPayload.action,
-          email_count: (actionResult.emails as unknown[])?.length || 0,
-          summary: actionResult.summary,
-          replies_sent: actionResult.replies_sent,
-          compose_result: actionResult.compose_result,
-          error: actionResult.error,
-        })}`,
-      },
-    ],
-  }));
+  const text = await chatComplete(userId, {
+    system: 'Helpful AI email assistant. Give a friendly 1-2 sentence response. Be specific about what was done.',
+    user: `User: "${userMessage}"\nResult: ${JSON.stringify({
+      action: actionPayload.action,
+      email_count: (actionResult.emails as unknown[])?.length || 0,
+      summary: actionResult.summary,
+      replies_sent: actionResult.replies_sent,
+      compose_result: actionResult.compose_result,
+      error: actionResult.error,
+    })}`,
+    maxTokens: 256,
+  });
 
-  return getText(response) || 'Done.';
+  return text || 'Done.';
+}
+
+// ---------------------------------------------------------------------------
+// SIGNATURE EXTRACTION — find the user's recurring sign-off from recent sent mail
+// ---------------------------------------------------------------------------
+export async function extractSignatureFromEmails(
+  userId: string,
+  sentBodies: string[],
+): Promise<string> {
+  if (!sentBodies.length) return '';
+
+  const tails = sentBodies
+    .slice(0, 8)
+    .map((b, i) => `--- Email ${i + 1} ---\n${b.slice(-600).trim()}`)
+    .join('\n\n');
+
+  const raw = await chatComplete(userId, {
+    system:
+      'You extract email signatures. Given the tails of several emails the same person sent, return ONLY the recurring signature block (name, title, contact details). Preserve line breaks. No commentary, no quotes. If no consistent signature exists, return the single word NONE.',
+    user: `Find the repeating signature across these emails:\n\n${tails}`,
+    maxTokens: 256,
+  });
+
+  const cleaned = raw.trim();
+  if (!cleaned || cleaned === 'NONE' || cleaned.toUpperCase() === 'NONE') return '';
+  return cleaned.replace(/^```[a-z]*\n?|```$/gi, '').replace(/^["']|["']$/g, '').trim();
 }
 
 // ---------------------------------------------------------------------------
 // DAILY SUMMARY
 // ---------------------------------------------------------------------------
 export async function generateDailySummary(
+  userId: string,
   emails: Array<{ subject: string; sender: string; summary: string; priority: string }>,
 ): Promise<string> {
   if (!emails.length) return 'No emails to summarise for this period.';
@@ -247,20 +232,11 @@ export async function generateDailySummary(
     .map((e, i) => `${i + 1}. [${e.priority}] ${e.sender}: ${e.subject} — ${e.summary}`)
     .join('\n');
 
-  const response = await withRetry(() => zai.chat.completions.create({
-    model: MODEL,
-    max_tokens: 1024,
-    messages: [
-      {
-        role: 'system',
-        content: 'Executive assistant writing a daily email digest. Concise, highlight action items.',
-      },
-      {
-        role: 'user',
-        content: `Summarise ${emails.length} emails:\n${list}\n\nFormat: brief overview, then bullet points for HIGH priority items, then note about remaining emails.`,
-      },
-    ],
-  }));
+  const text = await chatComplete(userId, {
+    system: 'Executive assistant writing a daily email digest. Concise, highlight action items.',
+    user: `Summarise ${emails.length} emails:\n${list}\n\nFormat: brief overview, then bullet points for HIGH priority items, then note about remaining emails.`,
+    maxTokens: 1024,
+  });
 
-  return getText(response) || 'Unable to generate summary.';
+  return text || 'Unable to generate summary.';
 }

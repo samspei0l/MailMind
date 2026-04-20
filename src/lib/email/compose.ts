@@ -50,7 +50,7 @@ export async function composeAndSend(
       const originalEmail = await getEmailById(request.reply_to_email_id, userId);
       if (!originalEmail) return { error: 'Original email not found.' };
 
-      composedContent = await composeEmail({
+      composedContent = await composeEmail(userId, {
         prompt: request.prompt,
         tone,
         fromEmail: connection.email,
@@ -65,7 +65,7 @@ export async function composeAndSend(
       composedContent.to = originalEmail.sender;
     } else {
       // 3. Compose a brand new email via AI
-      composedContent = await composeEmail({
+      composedContent = await composeEmail(userId, {
         prompt: request.prompt,
         tone,
         fromEmail: connection.email,
@@ -117,13 +117,27 @@ export async function composeAndSend(
           threadId = originalEmail?.thread_id || undefined;
         }
 
+        // Append the saved signature unless the caller explicitly opted out.
+        // Default is include_signature === true on the client, but we also
+        // treat `undefined` as "include it" here so legacy callers keep working.
+        const shouldAppendSignature = request.include_signature !== false;
+        const signature = shouldAppendSignature ? (connection.signature || '').trim() : '';
+        // Only append if the user hasn't already typed the signature into the
+        // body — otherwise an AI draft that already includes the saved sign-off
+        // would duplicate it.
+        const bodyAlreadyHasSignature =
+          signature && composedContent.body.trim().endsWith(signature);
+        const bodyToSend = signature && !bodyAlreadyHasSignature
+          ? `${composedContent.body.replace(/\s+$/, '')}\n\n${signature}`
+          : composedContent.body;
+
         const { messageId } = await sendGmailReply(
           accessToken,
           connection.refresh_token || '',
           {
             to: composedContent.to,
             subject: composedContent.subject,
-            body: composedContent.body,
+            body: bodyToSend,
             threadId,
           }
         );

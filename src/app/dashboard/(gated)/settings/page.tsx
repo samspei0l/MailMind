@@ -3,11 +3,13 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { formatDistanceToNow } from 'date-fns';
+import Link from 'next/link';
 import {
   CheckCircle, XCircle, Loader2, RefreshCw, Trash2,
-  Plus, Edit2, Check, Shield, X, Clock,
+  Plus, Edit2, Check, Shield, X, Clock, Sparkles, Key,
 } from 'lucide-react';
 import { ACCOUNT_COLORS, MAX_EMAIL_ACCOUNTS, SYNC_FREQUENCY_OPTIONS, type SyncFrequency } from '@/types';
+import { PROVIDERS as AI_PROVIDERS } from '@/lib/ai/providers';
 
 interface Conn {
   id: string; provider: string; email: string;
@@ -30,6 +32,7 @@ export default function SettingsPage() {
   const [editNick, setEditNick] = useState('');
   const [syncFrequency, setSyncFrequency] = useState<SyncFrequency>(null);
   const [savingFreq, setSavingFreq] = useState(false);
+  const [aiCfg, setAiCfg] = useState<{ provider: string | null; model: string | null; base_url: string | null; configured: boolean } | null>(null);
 
   const sp = useSearchParams();
   const ok = sp.get('success');
@@ -39,14 +42,17 @@ export default function SettingsPage() {
 
   async function load() {
     setLoading(true);
-    const [connsRes, profileRes] = await Promise.all([
+    const [connsRes, profileRes, aiRes] = await Promise.all([
       fetch('/api/connections'),
       fetch('/api/profile'),
+      fetch('/api/profile/ai-key'),
     ]);
     const connsData = await connsRes.json();
     const profileData = await profileRes.json();
+    const aiData = await aiRes.json();
     setConns(connsData.connections || []);
     setSyncFrequency((profileData.profile?.sync_frequency_minutes ?? null) as SyncFrequency);
+    setAiCfg(aiData);
     setLoading(false);
   }
 
@@ -251,6 +257,40 @@ export default function SettingsPage() {
                 );
               })}
             </div>
+          </div>
+        </section>
+
+        {/* AI Provider (BYOK) */}
+        <section className="mb-6">
+          <h2 className="text-base font-semibold text-foreground mb-3">AI Provider</h2>
+          <div className="bg-card border border-border rounded-2xl p-4">
+            <div className="flex items-start gap-3 mb-3">
+              <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0">
+                <Sparkles className="w-4 h-4 text-primary" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-foreground">
+                  {aiCfg?.configured
+                    ? (AI_PROVIDERS[aiCfg.provider as keyof typeof AI_PROVIDERS]?.label || aiCfg.provider)
+                    : 'No provider configured'}
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {aiCfg?.configured
+                    ? <>Model: <code className="text-foreground">{aiCfg.model}</code>{aiCfg.base_url ? <> · {aiCfg.base_url}</> : null}</>
+                    : 'Add an API key to enable AI features'}
+                </p>
+              </div>
+              <Link href="/dashboard/setup?edit=1"
+                className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 border border-border rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all">
+                <Key className="w-3 h-3" /> {aiCfg?.configured ? 'Update' : 'Configure'}
+              </Link>
+            </div>
+            {aiCfg?.configured && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg text-xs text-green-700 dark:text-green-400">
+                <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                Key is encrypted at rest. Updating replaces the stored key.
+              </div>
+            )}
           </div>
         </section>
 

@@ -52,6 +52,8 @@ export interface EmailConnection {
   token_expiry: string | null;
   is_active: boolean;
   last_sync_at: string | null;
+  signature: string | null;              // Auto-extracted from user's sent mail, appended to outgoing replies by default
+  signature_extracted_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -71,6 +73,9 @@ export interface Email {
   snippet: string | null;
   is_read: boolean;
   is_starred: boolean;
+  is_trashed: boolean;
+  is_spam: boolean;
+  is_archived: boolean;
   labels: string[] | null;
   received_at: string;
   direction: 'received' | 'sent';
@@ -171,6 +176,9 @@ export interface ComposeRequest {
   // types their reply directly (no Generate step) or edits the AI draft and
   // sends it verbatim — the AI must not rewrite what they reviewed.
   body_override?: string;
+  // When true, append the connection's saved signature to the outgoing body.
+  // Defaults to true on the client so signatures go out unless explicitly unchecked.
+  include_signature?: boolean;
 }
 
 export interface ComposeResult {
@@ -199,7 +207,63 @@ export interface EmailFilters {
   search?: string;
   connection_id?: string;       // Filter by specific account
   direction?: 'received' | 'sent';
+  // Mailbox view — 'inbox' (default) hides trashed/spam/archived; the
+  // others scope the list to that single bucket. Use 'all' for the raw,
+  // unfiltered set (debug/admin views).
+  view?: 'inbox' | 'spam' | 'trash' | 'archive' | 'all';
   limit?: number;
+}
+
+// ============================================================
+// MAILBOX ACTIONS — trash/spam/archive/etc.
+// Names mirror Gmail's intent (we translate to provider-specific
+// label changes inside the action layer). 'block_sender' creates a
+// real Gmail filter so future mail from that sender skips Inbox.
+// ============================================================
+export type EmailActionType =
+  | 'mark_read'
+  | 'mark_unread'
+  | 'star'
+  | 'unstar'
+  | 'archive'
+  | 'unarchive'
+  | 'trash'
+  | 'untrash'
+  | 'spam'
+  | 'not_spam'
+  | 'delete_forever'
+  | 'block_sender'
+  | 'unblock_sender';
+
+export interface EmailActionRequest {
+  action: EmailActionType;
+  // Operate on a list of stored email rows. Required for everything
+  // except `block_sender`/`unblock_sender`, which can also work by
+  // sender email alone (e.g. from chat: "block alerts@foo.com").
+  email_ids?: string[];
+  // For block/unblock from chat or settings — when this is set without
+  // email_ids, the action layer applies to every existing email from
+  // this sender across all matching connections.
+  sender_email?: string;
+  // Restrict block/unblock to one account. NULL means "all accounts".
+  connection_id?: string;
+}
+
+export interface EmailActionResult {
+  ok: boolean;
+  affected: number;
+  failed?: number;
+  error?: string;
+  message?: string;
+}
+
+export interface BlockedSender {
+  id: string;
+  user_id: string;
+  connection_id: string | null;
+  sender_email: string;
+  gmail_filter_id: string | null;
+  created_at: string;
 }
 
 export interface FilterAction {

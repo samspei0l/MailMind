@@ -157,6 +157,39 @@ export function parseGmailMessage(message: GmailMessage): ParsedEmail | null {
 // SEND EMAIL
 // ============================================================
 
+// Convert the user's body (which may contain [text](url) markdown links and
+// bare URLs) into safe, clickable HTML. Plain text stays plain text for the
+// fallback alternative part.
+export function renderBodyHtml(body: string): string {
+  const escaped = body
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+  // Markdown-style [text](url) → <a href="url">text</a>. Escaping already ran,
+  // so the brackets/parens we match here were literal in the source.
+  const withMdLinks = escaped.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+    (_m, text, url) => `<a href="${url}" target="_blank" rel="noopener">${text}</a>`,
+  );
+
+  // Auto-linkify bare URLs that weren't already wrapped by the markdown step.
+  // Only match URLs preceded by start-of-string or whitespace — this avoids
+  // re-wrapping URLs already sitting inside an <a href="..."> or >URL</a>.
+  const withBareLinks = withMdLinks.replace(
+    /(^|\s)(https?:\/\/[^\s<]+)/g,
+    (_m, pre, url) => `${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`,
+  );
+
+  return withBareLinks.replace(/\r?\n/g, '<br>');
+}
+
+// Plain-text fallback: strip markdown link syntax to `text (url)`.
+export function renderBodyPlain(body: string): string {
+  return body.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1 ($2)');
+}
+
 export async function sendGmailReply(
   accessToken: string,
   refreshToken: string,
@@ -172,17 +205,36 @@ export async function sendGmailReply(
 
   const subject = options.subject.startsWith('Re:') ? options.subject : `Re: ${options.subject}`;
 
-  const emailLines = [
+  const plainBody = renderBodyPlain(options.body);
+  const htmlBody = renderBodyHtml(options.body);
+
+  // multipart/alternative — most clients render the HTML, but we include the
+  // plain-text part so terminal-only readers and spam filters see clean text.
+  const boundary = `mm_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
+
+  const headers = [
     `To: ${options.to}`,
     `Subject: ${subject}`,
-    'Content-Type: text/plain; charset=utf-8',
     'MIME-Version: 1.0',
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
     options.inReplyTo ? `In-Reply-To: ${options.inReplyTo}` : '',
-    '',
-    options.body,
   ].filter(Boolean);
 
-  const rawEmail = emailLines.join('\r\n');
+  const bodyParts = [
+    `--${boundary}`,
+    'Content-Type: text/plain; charset=utf-8',
+    'Content-Transfer-Encoding: 7bit',
+    '',
+    plainBody,
+    `--${boundary}`,
+    'Content-Type: text/html; charset=utf-8',
+    'Content-Transfer-Encoding: 7bit',
+    '',
+    `<div>${htmlBody}</div>`,
+    `--${boundary}--`,
+  ];
+
+  const rawEmail = [...headers, '', ...bodyParts].join('\r\n');
   const encodedEmail = Buffer.from(rawEmail).toString('base64url');
 
   const result = await gmail.users.messages.send({
@@ -194,6 +246,153 @@ export async function sendGmailReply(
   });
 
   return { messageId: result.data.id! };
+}
+
+// ============================================================
+// MAILBOX MUTATIONS
+// ============================================================
+//
+// Gmail's model: every state lives as a label.
+//   UNREAD        — presence = unread, removal = read
+//   STARRED       — star toggle
+//   INBOX         — removal = archived (the "archive" action)
+//   TRASH / SPAM  — bucket destinations; managed via dedicated trash/
+//                   untrash endpoints or a label modify for spam
+//
+// All helpers below take an array of Gmail message IDs so the same
+// path serves single-row and bulk actions. We use users.messages.modify
+// in a loop rather than batchModify because:
+//   - batchModify returns no per-id status, so we can't surface
+//     partial failures cleanly
+//   - the per-call latency is dominated by the round trip the caller
+//     already paid; a 50-message bulk is still well under a second
+// If we hit scale where this matters, swap to batchModify selectively.
+
+async function modifyGmailLabels(
+  accessToken: string,
+  refreshToken: string,
+  ids: string[],
+  add: string[],
+  remove: string[],
+): Promise<{ affected: number; failed: number }> {
+  if (ids.length === 0) return { affected: 0, failed: 0 };
+  const gmail = createGmailClient(accessToken, refreshToken);
+  const results = await Promise.allSettled(
+    ids.map((id) => gmail.users.messages.modify({
+      userId: 'me',
+      id,
+      requestBody: { addLabelIds: add, removeLabelIds: remove },
+    })),
+  );
+  let affected = 0, failed = 0;
+  for (const r of results) {
+    if (r.status === 'fulfilled') affected++;
+    else failed++;
+  }
+  return { affected, failed };
+}
+
+export async function trashGmailMessages(accessToken: string, refreshToken: string, ids: string[]) {
+  if (ids.length === 0) return { affected: 0, failed: 0 };
+  const gmail = createGmailClient(accessToken, refreshToken);
+  const results = await Promise.allSettled(ids.map((id) => gmail.users.messages.trash({ userId: 'me', id })));
+  return tally(results);
+}
+
+export async function untrashGmailMessages(accessToken: string, refreshToken: string, ids: string[]) {
+  if (ids.length === 0) return { affected: 0, failed: 0 };
+  const gmail = createGmailClient(accessToken, refreshToken);
+  const results = await Promise.allSettled(ids.map((id) => gmail.users.messages.untrash({ userId: 'me', id })));
+  return tally(results);
+}
+
+// Permanent delete — Gmail's `messages.delete` skips Trash. Use this only
+// after explicit confirmation; the operation is irreversible.
+export async function deleteGmailMessagesPermanently(accessToken: string, refreshToken: string, ids: string[]) {
+  if (ids.length === 0) return { affected: 0, failed: 0 };
+  const gmail = createGmailClient(accessToken, refreshToken);
+  const results = await Promise.allSettled(ids.map((id) => gmail.users.messages.delete({ userId: 'me', id })));
+  return tally(results);
+}
+
+export function markGmailAsSpam(accessToken: string, refreshToken: string, ids: string[]) {
+  return modifyGmailLabels(accessToken, refreshToken, ids, ['SPAM'], ['INBOX']);
+}
+
+export function markGmailNotSpam(accessToken: string, refreshToken: string, ids: string[]) {
+  return modifyGmailLabels(accessToken, refreshToken, ids, ['INBOX'], ['SPAM']);
+}
+
+// "Archive" in Gmail = remove from Inbox. The message stays accessible via
+// All Mail / search but disappears from the inbox list.
+export function archiveGmailMessages(accessToken: string, refreshToken: string, ids: string[]) {
+  return modifyGmailLabels(accessToken, refreshToken, ids, [], ['INBOX']);
+}
+
+export function unarchiveGmailMessages(accessToken: string, refreshToken: string, ids: string[]) {
+  return modifyGmailLabels(accessToken, refreshToken, ids, ['INBOX'], []);
+}
+
+export function markGmailRead(accessToken: string, refreshToken: string, ids: string[]) {
+  return modifyGmailLabels(accessToken, refreshToken, ids, [], ['UNREAD']);
+}
+
+export function markGmailUnread(accessToken: string, refreshToken: string, ids: string[]) {
+  return modifyGmailLabels(accessToken, refreshToken, ids, ['UNREAD'], []);
+}
+
+export function starGmailMessages(accessToken: string, refreshToken: string, ids: string[]) {
+  return modifyGmailLabels(accessToken, refreshToken, ids, ['STARRED'], []);
+}
+
+export function unstarGmailMessages(accessToken: string, refreshToken: string, ids: string[]) {
+  return modifyGmailLabels(accessToken, refreshToken, ids, [], ['STARRED']);
+}
+
+function tally(results: PromiseSettledResult<unknown>[]): { affected: number; failed: number } {
+  let affected = 0, failed = 0;
+  for (const r of results) {
+    if (r.status === 'fulfilled') affected++;
+    else failed++;
+  }
+  return { affected, failed };
+}
+
+// ============================================================
+// GMAIL FILTERS — the "Block sender" backbone
+// ============================================================
+//
+// When a user blocks a sender, we create a real Gmail server-side filter
+// so the rule survives MailMind being uninstalled and so future mail is
+// auto-routed to spam without us having to re-process it. Action.spec:
+// `from:` matches the sender; the action skips Inbox and applies SPAM.
+
+export async function createGmailBlockFilter(
+  accessToken: string,
+  refreshToken: string,
+  senderEmail: string,
+): Promise<{ filterId: string }> {
+  const gmail = createGmailClient(accessToken, refreshToken);
+  const res = await gmail.users.settings.filters.create({
+    userId: 'me',
+    requestBody: {
+      criteria: { from: senderEmail },
+      action: { addLabelIds: ['SPAM'], removeLabelIds: ['INBOX'] },
+    },
+  });
+  return { filterId: res.data.id || '' };
+}
+
+export async function deleteGmailFilter(accessToken: string, refreshToken: string, filterId: string) {
+  if (!filterId) return;
+  const gmail = createGmailClient(accessToken, refreshToken);
+  try {
+    await gmail.users.settings.filters.delete({ userId: 'me', id: filterId });
+  } catch (err) {
+    // 404 is fine — filter was already deleted on Gmail's side.
+    const code = (err as { code?: number })?.code;
+    if (code !== 404) throw err;
+  }
 }
 
 // ============================================================

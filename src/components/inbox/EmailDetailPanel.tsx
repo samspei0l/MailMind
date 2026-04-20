@@ -1,17 +1,17 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { Email, EmailConnection, EmailTone } from '@/types';
 import { TONE_LABELS } from '@/types';
 import { format } from 'date-fns';
-import { X, Reply, Copy, Sparkles, Loader2, CheckCircle, PenLine, RefreshCw } from 'lucide-react';
+import { X, Reply, Copy, Sparkles, Loader2, CheckCircle, PenLine, RefreshCw, Link2, PenTool } from 'lucide-react';
 import AccountPicker from '@/components/ui/AccountPicker';
 import TonePicker from '@/components/ui/TonePicker';
 import VoiceRecorder from '@/components/ui/VoiceRecorder';
 
 interface Props {
   email: Email;
-  connections: Pick<EmailConnection, 'id' | 'email' | 'nickname' | 'color' | 'provider'>[];
+  connections: Pick<EmailConnection, 'id' | 'email' | 'nickname' | 'color' | 'provider' | 'signature'>[];
   onClose: () => void;
   autoOpenReply?: boolean;
 }
@@ -35,6 +35,15 @@ export default function EmailDetailPanel({ email, connections, onClose, autoOpen
   const [replySent, setReplySent] = useState(false);
   const [replyError, setReplyError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [includeSignature, setIncludeSignature] = useState(true);
+  const [detectingSig, setDetectingSig] = useState(false);
+  const [sigFlash, setSigFlash] = useState('');
+  // Local cache so the toggle/"Detect signature" button reflect the latest
+  // state without waiting for a page reload — mirrors the signature that
+  // came back from /api/connections/signature.
+  const [signatures, setSignatures] = useState<Record<string, string | null>>({});
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  const draftRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Auto-select the connection that received this email
   useEffect(() => {
@@ -86,6 +95,64 @@ export default function EmailDetailPanel({ email, connections, onClose, autoOpen
     }
   }
 
+  // Prompt the user for URL + display text, then insert [text](url) at the
+  // caret position of whichever textarea is currently active (draft or prompt).
+  // The send path turns [text](url) into a real <a> tag in the HTML MIME part.
+  function insertLink() {
+    const url = window.prompt('Link URL (e.g. https://example.com)');
+    if (!url || !url.trim()) return;
+    const normalized = /^https?:\/\//i.test(url.trim()) ? url.trim() : `https://${url.trim()}`;
+    const text = window.prompt('Text to display', normalized) || normalized;
+
+    const target = showPreview ? draftRef.current : promptRef.current;
+    const markdown = `[${text}](${normalized})`;
+    if (!target) {
+      // No focused textarea — append to whichever body the user is editing.
+      if (showPreview) setGeneratedBody((b) => (b ? `${b} ${markdown}` : markdown));
+      else setPrompt((b) => (b ? `${b} ${markdown}` : markdown));
+      return;
+    }
+    const start = target.selectionStart ?? target.value.length;
+    const end = target.selectionEnd ?? target.value.length;
+    const before = target.value.slice(0, start);
+    const after = target.value.slice(end);
+    const next = `${before}${markdown}${after}`;
+    if (showPreview) setGeneratedBody(next);
+    else setPrompt(next);
+    // Restore caret just after the inserted link.
+    requestAnimationFrame(() => {
+      target.focus();
+      const pos = before.length + markdown.length;
+      target.setSelectionRange(pos, pos);
+    });
+  }
+
+  const currentSignature = fromId
+    ? (signatures[fromId] ?? connections.find((c) => c.id === fromId)?.signature ?? null)
+    : null;
+
+  async function detectSignature() {
+    if (!fromId) return;
+    setDetectingSig(true);
+    setSigFlash('');
+    try {
+      const res = await fetch('/api/connections/signature', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connection_id: fromId }),
+      });
+      const data = await res.json();
+      if (data.error) { setSigFlash(data.error); return; }
+      setSignatures((prev) => ({ ...prev, [fromId]: data.signature || null }));
+      setSigFlash(data.message || (data.signature ? 'Signature saved.' : 'No signature found.'));
+      setTimeout(() => setSigFlash(''), 4000);
+    } catch (err) {
+      setSigFlash((err as Error).message);
+    } finally {
+      setDetectingSig(false);
+    }
+  }
+
   async function handleSend() {
     // Two paths:
     //   - showPreview=true  → user reviewed an AI draft, send that verbatim
@@ -110,6 +177,7 @@ export default function EmailDetailPanel({ email, connections, onClose, autoOpen
         subject: subjectToSend,
         prompt: '',
         tone, from_connection_id: fromId, reply_to_email_id: email.id, send_immediately: true,
+        include_signature: includeSignature,
       }),
     });
     const data = await res.json();
@@ -216,11 +284,17 @@ export default function EmailDetailPanel({ email, connections, onClose, autoOpen
                       <div className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400">
                         <Sparkles className="w-3 h-3" /> AI Draft · {TONE_LABELS[tone].emoji} {TONE_LABELS[tone].label}
                       </div>
-                      <button onClick={() => setShowPreview(false)} className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
-                        <PenLine className="w-3 h-3" /> Edit prompt
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button onClick={insertLink} title="Insert link"
+                          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                          <Link2 className="w-3 h-3" /> Link
+                        </button>
+                        <button onClick={() => setShowPreview(false)} className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
+                          <PenLine className="w-3 h-3" /> Edit prompt
+                        </button>
+                      </div>
                     </div>
-                    <textarea value={generatedBody} onChange={(e) => setGeneratedBody(e.target.value)} rows={6}
+                    <textarea ref={draftRef} value={generatedBody} onChange={(e) => setGeneratedBody(e.target.value)} rows={6}
                       className="w-full text-xs bg-transparent focus:outline-none resize-none text-foreground leading-relaxed" />
                   </div>
                 )}
@@ -229,16 +303,46 @@ export default function EmailDetailPanel({ email, connections, onClose, autoOpen
                   <div className="px-3.5 py-3 border-b border-border">
                     <div className="flex items-center justify-between mb-1.5">
                       <p className="text-xs font-medium text-muted-foreground">Write your reply — or describe it for AI</p>
-                      <VoiceRecorder fromConnectionId={fromId} onTranscript={(t) => { setPrompt(t); handleGenerate(t); }} disabled={!fromId} />
+                      <div className="flex items-center gap-2">
+                        <button onClick={insertLink} title="Insert link"
+                          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                          <Link2 className="w-3 h-3" /> Link
+                        </button>
+                        <VoiceRecorder fromConnectionId={fromId} onTranscript={(t) => { setPrompt(t); handleGenerate(t); }} disabled={!fromId} />
+                      </div>
                     </div>
-                    <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)}
+                    <textarea ref={promptRef} value={prompt} onChange={(e) => setPrompt(e.target.value)}
                       placeholder={`Write the actual reply, or describe it like "Tell them the quote will be ready Friday"`}
                       rows={4} className="w-full text-sm bg-transparent focus:outline-none resize-none text-foreground placeholder-muted-foreground leading-relaxed" />
                     <p className="text-[11px] text-muted-foreground mt-1.5 leading-relaxed">
-                      <Sparkles className="w-3 h-3 inline mr-1 -mt-0.5" /><strong className="text-foreground/80">Generate</strong> turns your text into an AI draft you can edit. <strong className="text-foreground/80">Send Reply</strong> sends what you typed, as-is.
+                      <Sparkles className="w-3 h-3 inline mr-1 -mt-0.5" /><strong className="text-foreground/80">Generate</strong> turns your text into an AI draft you can edit. <strong className="text-foreground/80">Send Reply</strong> sends what you typed, as-is. Paste a URL or click <strong className="text-foreground/80">Link</strong> for hyperlinks.
                     </p>
                   </div>
                 )}
+                {/* Signature row */}
+                <div className="px-3.5 py-2.5 border-b border-border bg-muted/10">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="flex items-center gap-2 text-xs text-foreground cursor-pointer">
+                      <input type="checkbox" checked={includeSignature && !!currentSignature}
+                        onChange={(e) => setIncludeSignature(e.target.checked)}
+                        disabled={!currentSignature}
+                        className="accent-primary" />
+                      <PenTool className="w-3 h-3 text-muted-foreground" />
+                      {currentSignature ? 'Include my signature' : 'No signature saved for this account'}
+                    </label>
+                    <button onClick={detectSignature} disabled={detectingSig || !fromId}
+                      className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 disabled:opacity-50">
+                      {detectingSig ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                      {currentSignature ? 'Re-detect' : 'Detect signature'}
+                    </button>
+                  </div>
+                  {currentSignature && includeSignature && (
+                    <pre className="mt-2 text-[11px] text-muted-foreground whitespace-pre-wrap font-sans leading-snug border-l-2 border-border pl-2">
+                      {currentSignature}
+                    </pre>
+                  )}
+                  {sigFlash && <p className="mt-1.5 text-[11px] text-muted-foreground">{sigFlash}</p>}
+                </div>
                 {replyError && <p className="px-3.5 py-2 text-xs text-red-500 bg-red-50 dark:bg-red-900/20 border-b border-border">{replyError}</p>}
                 {/* Actions */}
                 <div className="px-3.5 py-2.5 bg-muted/20 flex items-center justify-between gap-2">

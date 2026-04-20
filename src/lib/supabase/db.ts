@@ -70,6 +70,15 @@ export async function updateLastSync(connectionId: string) {
   await supabase.from('email_connections').update({ last_sync_at: new Date().toISOString() }).eq('id', connectionId);
 }
 
+export async function updateConnectionSignature(id: string, userId: string, signature: string | null) {
+  const { error } = await supabase
+    .from('email_connections')
+    .update({ signature, signature_extracted_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('user_id', userId);
+  if (error) throw new Error(`updateConnectionSignature: ${error.message}`);
+}
+
 // ============================================================
 // PROFILE + AUTO-SYNC
 // ============================================================
@@ -82,6 +91,56 @@ export async function getProfile(userId: string): Promise<Profile | null> {
 export async function updateSyncFrequency(userId: string, minutes: number | null) {
   const { error } = await supabase.from('profiles').update({ sync_frequency_minutes: minutes }).eq('id', userId);
   if (error) throw new Error(`updateSyncFrequency: ${error.message}`);
+}
+
+// ============================================================
+// AI PROVIDER CONFIG (per-user key lives in profiles)
+// ============================================================
+
+export async function getAIConfigForUser(userId: string): Promise<{
+  ai_provider: string | null;
+  ai_model: string | null;
+  ai_base_url: string | null;
+  has_key: boolean;
+} | null> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('ai_provider, ai_model, ai_base_url, ai_api_key_encrypted')
+    .eq('id', userId)
+    .maybeSingle();
+  if (error) return null;
+  if (!data) return { ai_provider: null, ai_model: null, ai_base_url: null, has_key: false };
+  return {
+    ai_provider: data.ai_provider,
+    ai_model: data.ai_model,
+    ai_base_url: data.ai_base_url,
+    has_key: !!data.ai_api_key_encrypted,
+  };
+}
+
+// Upserts to survive the case where the `handle_new_user` trigger didn't run
+// (older users, trigger disabled, etc.) — otherwise a plain UPDATE would
+// silently affect 0 rows and the gated layout would bounce the user back to
+// /dashboard/setup forever.
+export async function updateUserAIConfig(userId: string, params: {
+  email: string;
+  provider: string;
+  model: string;
+  baseURL: string | null;
+  encryptedKey: string;
+}) {
+  const { error } = await supabase
+    .from('profiles')
+    .upsert({
+      id: userId,
+      email: params.email,
+      ai_provider: params.provider,
+      ai_model: params.model,
+      ai_base_url: params.baseURL,
+      ai_api_key_encrypted: params.encryptedKey,
+      ai_configured_at: new Date().toISOString(),
+    }, { onConflict: 'id' });
+  if (error) throw new Error(`updateUserAIConfig: ${error.message}`);
 }
 
 // Returns (user_id, freq, connection) for every active connection belonging to a

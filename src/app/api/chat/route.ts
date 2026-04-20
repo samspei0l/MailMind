@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
 
   try {
     // Parse user intent
-    const actionPayload = await parseUserIntent(message);
+    const actionPayload = await parseUserIntent(user.id, message);
     let result: ActionResult = {};
 
     // Execute action
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate conversational response
-    const assistantMessage = await generateChatResponse(message, result, actionPayload);
+    const assistantMessage = await generateChatResponse(user.id, message, result, actionPayload);
 
     // Save assistant message
     const savedMessage = await insertChatMessage({

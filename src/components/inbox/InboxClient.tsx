@@ -36,7 +36,7 @@ export default function InboxClient({ initialEmails, initialFilters }: Props) {
   const [search, setSearch] = useState(initialFilters.search || '');
   const [loading, setLoading] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
-  const [connections, setConnections] = useState<Pick<EmailConnection, 'id' | 'email' | 'nickname' | 'color' | 'provider'>[]>([]);
+  const [connections, setConnections] = useState<Pick<EmailConnection, 'id' | 'email' | 'nickname' | 'color' | 'provider' | 'signature'>[]>([]);
   const [composeOpen, setComposeOpen] = useState(false);
   // When set to an email id, EmailDetailPanel opens directly into AI-reply mode
   const [replyForId, setReplyForId] = useState<string | null>(null);
