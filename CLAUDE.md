@@ -17,7 +17,8 @@ No test framework is configured.
 
 Copy `.env.local.example` to `.env.local` and fill in:
 - `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY`
-- `OPENAI_API_KEY` (used for GPT-4.1 enrichment + Whisper voice transcription)
+- `NVIDIA_API_KEY` (voice transcription via NVIDIA's hosted whisper-large-v3 — get a key at build.nvidia.com)
+- LLM provider keys are BYOK via the Settings → Setup UI and stored encrypted in Supabase; no env var needed for enrichment/compose
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` (Gmail OAuth)
 - `NEXTAUTH_URL` / `NEXTAUTH_SECRET`
 
@@ -70,7 +71,7 @@ All tables have RLS policies — users only access their own data. API routes us
 
 **Tone selection** — compose/reply supports: professional, friendly, formal, assertive, concise, apologetic, persuasive.
 
-**Voice** — audio (webm/mp4/wav, max 25 MB) → Whisper transcription → GPT-4.1 composition → optional send.
+**Voice** — audio (webm/mp4/wav, max 25 MB) → NVIDIA whisper-large-v3 transcription → LLM composition → optional send. See `src/lib/ai/nvidia-whisper.ts`.
 
 ### Auth
 

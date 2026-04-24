@@ -1,4 +1,3 @@
-import OpenAI from 'openai';
 import type { AIEmailEnrichment, ActionPayload, ActionResult, EmailTone } from '@/types';
 import { TONE_LABELS } from '@/types';
 import { chatComplete } from './client';
@@ -10,11 +9,11 @@ import { chatComplete } from './client';
 // the profiles table. MailMind no longer runs any shared LLM
 // spend — each tester brings their own key at signup.
 //
-// Whisper is the exception: speech-to-text still uses the
-// operator-supplied OPENAI_WHISPER_KEY because not every
-// supported provider offers Whisper. If a user picks a non-OpenAI
-// LLM and the operator hasn't set OPENAI_WHISPER_KEY, voice is
-// unavailable and we surface a friendly error.
+// Whisper is the exception: speech-to-text goes through the
+// operator-supplied NVIDIA_API_KEY (see ./nvidia-whisper.ts)
+// because not every supported LLM provider offers a Whisper
+// endpoint. If that key is unset, voice features surface a
+// friendly error and are disabled.
 // ============================================================
 
 // ---------------------------------------------------------------------------
@@ -154,22 +153,16 @@ export async function generateEmailReply(
 
 // ---------------------------------------------------------------------------
 // VOICE TRANSCRIPTION (Whisper)
-// Uses the operator's OPENAI_WHISPER_KEY — Whisper isn't covered by
-// every LLM provider. If unset, voice features return a clear error.
+//
+// We use NVIDIA's hosted whisper-large-v3 (OpenAI-compatible endpoint) so
+// voice works without requiring a separate OpenAI subscription. The key
+// lives in process.env.NVIDIA_API_KEY — see src/lib/ai/nvidia-whisper.ts
+// for the request details.
+//
+// The function signature is preserved so callers (/api/voice, compose.ts)
+// don't need to change.
 // ---------------------------------------------------------------------------
-export async function transcribeVoice(audioBuffer: Buffer, mimeType: string): Promise<{ transcript: string; duration: number }> {
-  const whisperKey = process.env.OPENAI_WHISPER_KEY;
-  if (!whisperKey) {
-    throw new Error('Voice transcription is not available. Add OPENAI_WHISPER_KEY to .env.local with a valid OpenAI key.');
-  }
-  const whisper = new OpenAI({ apiKey: whisperKey });
-  const audioFile = new File([new Uint8Array(audioBuffer)], 'voice.webm', { type: mimeType });
-  const result = await whisper.audio.transcriptions.create({
-    model: 'whisper-1', file: audioFile, language: 'en', response_format: 'verbose_json',
-  });
-  const duration = (result as unknown as { duration?: number }).duration ?? 0;
-  return { transcript: result.text, duration };
-}
+export { transcribeWithNvidia as transcribeVoice } from './nvidia-whisper';
 
 // ---------------------------------------------------------------------------
 // CHAT RESPONSE

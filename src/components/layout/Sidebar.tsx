@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { createSupabaseClient } from '@/lib/supabase/client';
 import type { User } from '@supabase/supabase-js';
 import type { EmailConnection } from '@/types';
+import { MAX_EMAIL_ACCOUNTS } from '@/types';
 import {
   Inbox, MessageSquare, Settings, LogOut,
   RefreshCw, PenLine, Plus, History,
@@ -261,7 +262,7 @@ export default function Sidebar({ user }: { user: User }) {
             <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-white/30">Connected</p>
             {connections.length > 0 && (
               <span className="text-[10px] font-semibold text-white/50 bg-white/10 px-1.5 py-[1px] rounded-full">
-                {connections.length}/5
+                {connections.length}/{MAX_EMAIL_ACCOUNTS}
               </span>
             )}
           </div>
@@ -315,7 +316,7 @@ export default function Sidebar({ user }: { user: User }) {
                   </div>
                 );
               })}
-              {connections.length < 5 && (
+              {connections.length < MAX_EMAIL_ACCOUNTS && (
                 <Link
                   href="/dashboard/settings"
                   className="group flex items-center gap-2.5 px-2 py-1.5 rounded-lg transition-colors mt-0.5"

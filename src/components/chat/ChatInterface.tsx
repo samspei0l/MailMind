@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import Image from 'next/image';
 import type { Email, ActionPayload } from '@/types';
 import {
-  Send, Loader2, Sparkles, AlertCircle, Mail,
+  Send, Loader2, Sparkles, AlertCircle, Mail, Mic, Square,
   Flame, ReplyAll, CalendarClock, ShieldAlert, FileText, DollarSign,
 } from 'lucide-react';
 import { format } from 'date-fns';
@@ -33,6 +33,147 @@ function UserAvatar() {
   );
 }
 
+/**
+ * Compact mic button for the chat composer. Records audio via MediaRecorder,
+ * POSTs it to /api/voice/transcribe (NVIDIA whisper-large-v3), and hands the
+ * transcript back so the user can review and edit before pressing Send.
+ *
+ * Kept inline rather than reusing VoiceRecorder because that component is
+ * shaped around the "voice → composed email" pipeline (requires a connection
+ * id, auto-sends through the LLM compose step) — chat just needs raw text.
+ */
+function ChatVoiceButton({
+  onTranscript,
+  disabled,
+}: {
+  onTranscript: (text: string) => void;
+  disabled?: boolean;
+}) {
+  const [state, setState] = useState<'idle' | 'recording' | 'processing'>('idle');
+  const [error, setError] = useState<string | null>(null);
+  const [duration, setDuration] = useState(0);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  const cleanup = useCallback(() => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+  }, []);
+
+  useEffect(() => cleanup, [cleanup]);
+
+  const stop = useCallback(() => {
+    if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
+  }, []);
+
+  const start = useCallback(async () => {
+    setError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      chunksRef.current = [];
+
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+        ? 'audio/webm'
+        : 'audio/mp4';
+
+      const recorder = new MediaRecorder(stream, { mimeType });
+      recorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+
+      recorder.onstop = async () => {
+        cleanup();
+        if (chunksRef.current.length === 0) { setState('idle'); return; }
+        setState('processing');
+
+        const blob = new Blob(chunksRef.current, { type: mimeType });
+        const form = new FormData();
+        form.append('audio', blob, 'voice.webm');
+        try {
+          const res = await fetch('/api/voice/transcribe', { method: 'POST', body: form });
+          const data = await res.json();
+          if (data.error) {
+            setError(data.error);
+          } else if (typeof data.transcript === 'string' && data.transcript.trim()) {
+            onTranscript(data.transcript.trim());
+          }
+        } catch {
+          setError('Transcription failed. Please try again.');
+        } finally {
+          setState('idle');
+        }
+      };
+
+      recorder.start(250);
+      setState('recording');
+      setDuration(0);
+      timerRef.current = setInterval(() => setDuration((d) => d + 1), 1000);
+
+      // Safety cap — NVIDIA rejects files >25 MB and at opus bitrate that's
+      // well past two minutes. Auto-stop so a forgotten recording doesn't run.
+      setTimeout(() => { if (recorderRef.current?.state === 'recording') stop(); }, 120_000);
+    } catch (err) {
+      cleanup();
+      const msg = (err as Error).message || '';
+      setError(/permission/i.test(msg) ? 'Microphone permission denied.' : 'Microphone unavailable.');
+      setState('idle');
+    }
+  }, [cleanup, onTranscript, stop]);
+
+  const formatDuration = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
+  if (state === 'processing') {
+    return (
+      <div
+        className="h-9 w-9 rounded-xl flex items-center justify-center flex-shrink-0 self-end"
+        style={{ background: 'hsl(var(--muted))' }}
+        title="Transcribing…"
+      >
+        <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (state === 'recording') {
+    return (
+      <button
+        type="button"
+        onClick={stop}
+        aria-label="Stop recording"
+        title="Stop recording"
+        className="h-9 px-2.5 rounded-xl flex items-center gap-1.5 flex-shrink-0 self-end transition-transform active:scale-95"
+        style={{ background: '#EF4444', color: '#fff', boxShadow: '0 4px 14px rgba(239,68,68,0.35)' }}
+      >
+        <Square className="w-3 h-3 fill-white" />
+        <span className="text-[11px] font-mono tabular-nums">{formatDuration(duration)}</span>
+      </button>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={start}
+      disabled={disabled}
+      aria-label="Record voice message"
+      title={error || 'Record voice message'}
+      className="h-9 w-9 rounded-xl flex items-center justify-center flex-shrink-0 self-end transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      style={{
+        background: error ? 'rgba(239,68,68,0.1)' : 'rgba(0,78,110,0.08)',
+        color: error ? '#EF4444' : 'hsl(var(--primary))',
+      }}
+    >
+      <Mic className="w-4 h-4" />
+    </button>
+  );
+}
+
 interface Message {
   id: string;
   role: 'user' | 'assistant';
@@ -44,6 +185,21 @@ interface Message {
   loading?: boolean;
   action?: ActionPayload;
   createdAt?: number;
+}
+
+interface StoredChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  action_type: string | null;
+  action_data: ActionPayload | null;
+  result_data: {
+    emails?: Email[];
+    summary?: string;
+    replies_sent?: number;
+    error?: string;
+  } | null;
+  created_at: string;
 }
 
 type SuggestionGroup = {
@@ -104,11 +260,42 @@ export default function ChatInterface({ initialQuery, initialSessionId }: Props)
   const [loading, setLoading] = useState(false);
   const [focused, setFocused] = useState(false);
   const [sessionId, setSessionId] = useState<string | undefined>(initialSessionId);
+  const [historyLoading, setHistoryLoading] = useState(Boolean(initialSessionId));
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const lastAutoSentRef = useRef<string | null>(null);
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  // Load prior messages when opening an existing session (e.g. via
+  // /dashboard/chat?sessionId=…). Without this, resuming a chat shows an
+  // empty thread even though the history exists in Supabase.
+  useEffect(() => {
+    if (!initialSessionId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/chat?sessionId=${encodeURIComponent(initialSessionId)}`);
+        const data = await res.json();
+        if (cancelled || !Array.isArray(data.messages)) return;
+        const restored: Message[] = (data.messages as StoredChatMessage[]).map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          action: m.action_data ?? undefined,
+          emails: m.result_data?.emails,
+          summary: m.result_data?.summary,
+          replies_sent: m.result_data?.replies_sent,
+          error: m.result_data?.error,
+          createdAt: new Date(m.created_at).getTime(),
+        }));
+        setMessages(restored);
+      } finally {
+        if (!cancelled) setHistoryLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [initialSessionId]);
 
   const sendMessage = useCallback(async (text?: string) => {
     const messageText = text || input;
@@ -173,10 +360,13 @@ export default function ChatInterface({ initialQuery, initialSessionId }: Props)
 
   useEffect(() => {
     if (!initialQuery) return;
+    // Wait until any past-session restore finishes so the auto-sent
+    // question lands after the history, not before or concurrently.
+    if (historyLoading) return;
     if (lastAutoSentRef.current === initialQuery) return;
     lastAutoSentRef.current = initialQuery;
     sendMessage(initialQuery);
-  }, [initialQuery, sendMessage]);
+  }, [initialQuery, sendMessage, historyLoading]);
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -185,7 +375,7 @@ export default function ChatInterface({ initialQuery, initialSessionId }: Props)
     }
   }
 
-  const isEmpty = messages.length === 0;
+  const isEmpty = messages.length === 0 && !historyLoading;
 
   return (
     <div
@@ -217,6 +407,13 @@ export default function ChatInterface({ initialQuery, initialSessionId }: Props)
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-6 py-6 space-y-5">
+        {historyLoading && messages.length === 0 && (
+          <div className="flex items-center justify-center py-12 text-muted-foreground">
+            <Loader2 className="w-5 h-5 animate-spin mr-2" />
+            <span className="text-[13px]">Loading conversation…</span>
+          </div>
+        )}
+
         {isEmpty && (
           <div className="max-w-2xl mx-auto pt-6 pb-2">
             <div className="flex flex-col items-center text-center mb-8">
@@ -439,6 +636,24 @@ export default function ChatInterface({ initialQuery, initialSessionId }: Props)
               t.style.height = Math.min(t.scrollHeight, 140) + 'px';
             }}
           />
+          <ChatVoiceButton
+            disabled={loading}
+            onTranscript={(text) => {
+              // Append to whatever the user has already typed (with a space
+              // separator) so partial drafts aren't clobbered. Then focus
+              // the textarea so they can edit before sending.
+              setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
+              requestAnimationFrame(() => {
+                const el = inputRef.current;
+                if (el) {
+                  el.focus();
+                  el.style.height = 'auto';
+                  el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+                  el.setSelectionRange(el.value.length, el.value.length);
+                }
+              });
+            }}
+          />
           <button
             onClick={() => sendMessage()}
             disabled={loading || !input.trim()}
@@ -459,6 +674,8 @@ export default function ChatInterface({ initialQuery, initialSessionId }: Props)
           <kbd className="px-1.5 py-[1px] rounded border border-border bg-muted font-mono text-[10px] text-muted-foreground">Shift</kbd>
           {' + '}
           <kbd className="px-1.5 py-[1px] rounded border border-border bg-muted font-mono text-[10px] text-muted-foreground">Enter</kbd> for a new line
+          <span className="mx-2">·</span>
+          <Mic className="w-3 h-3 inline -mt-0.5" /> to speak
         </p>
       </div>
     </div>
