@@ -161,7 +161,7 @@ describe('POST /api/emails', () => {
 
   it('calls syncEmails with user id and default maxResults=50', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
-    mockedSyncEmails.mockResolvedValue({ synced: 0, enriched: 0 });
+    mockedSyncEmails.mockResolvedValue({ synced: 0, newEmails: 0, enriched: 0 });
 
     await POST(makePostRequest('/api/emails', {}));
 
@@ -170,7 +170,7 @@ describe('POST /api/emails', () => {
 
   it('uses maxResults from request body when provided', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
-    mockedSyncEmails.mockResolvedValue({ synced: 20, enriched: 5 });
+    mockedSyncEmails.mockResolvedValue({ synced: 20, newEmails: 12, enriched: 5 });
 
     await POST(makePostRequest('/api/emails', { maxResults: 100 }));
 
@@ -179,16 +179,16 @@ describe('POST /api/emails', () => {
 
   it('returns sync result as JSON', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
-    mockedSyncEmails.mockResolvedValue({ synced: 10, enriched: 8 });
+    mockedSyncEmails.mockResolvedValue({ synced: 10, newEmails: 3, enriched: 8 });
 
     const res = await POST(makePostRequest('/api/emails'));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ synced: 10, enriched: 8 });
+    expect(await res.json()).toEqual({ synced: 10, newEmails: 3, enriched: 8 });
   });
 
   it('handles malformed JSON body gracefully (uses defaults)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
-    mockedSyncEmails.mockResolvedValue({ synced: 0, enriched: 0 });
+    mockedSyncEmails.mockResolvedValue({ synced: 0, newEmails: 0, enriched: 0 });
 
     const req = new NextRequest('http://localhost:3000/api/emails', {
       method: 'POST',
@@ -202,7 +202,7 @@ describe('POST /api/emails', () => {
 
   it('propagates sync error message in the response', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
-    mockedSyncEmails.mockResolvedValue({ synced: 0, enriched: 0, error: 'No Gmail connection found.' });
+    mockedSyncEmails.mockResolvedValue({ synced: 0, newEmails: 0, enriched: 0, error: 'No Gmail connection found.' });
 
     const res = await POST(makePostRequest('/api/emails'));
     const body = await res.json();

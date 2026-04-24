@@ -61,11 +61,15 @@ export async function parseUserIntent(userId: string, userMessage: string): Prom
   const text = await chatComplete(userId, {
     system: `Convert email commands to JSON. Today: ${today}. Yesterday: ${yesterday}.
 Return ONE of:
-1. Filter:  {"action":"filter","filters":{"priority"?,"category"?,"type"?,"requires_reply"?,"sender"?,"date_from"?,"date_to"?,"search"?,"limit"?}}
-2. Reply:   {"action":"reply","filters":{...},"message":"...","tone"?:"professional|friendly|formal|assertive|concise|apologetic|persuasive"}
-3. Summary: {"action":"summary","date_range"?:"today|yesterday|this_week|last_week"}
-4. Search:  {"action":"search","query":"..."}
-5. Compose: {"action":"compose","prompt":"...","to"?:"email","tone"?:"professional|friendly|..."}
+1. Filter:       {"action":"filter","filters":{"priority"?,"category"?,"type"?,"requires_reply"?,"sender"?,"date_from"?,"date_to"?,"search"?,"limit"?}}
+2. Reply:        {"action":"reply","filters":{...},"message":"...","tone"?:"professional|friendly|formal|assertive|concise|apologetic|persuasive"}
+3. Summary:      {"action":"summary","date_range"?:"today|yesterday|this_week|last_week"}
+4. Search:       {"action":"search","query":"..."}
+5. Compose:      {"action":"compose","prompt":"...","to"?:"email","tone"?:"professional|friendly|..."}
+6. Email action: {"action":"email_action","email_action":"trash|untrash|archive|unarchive|spam|not_spam|delete_forever|mark_read|mark_unread|star|unstar|block_sender|unblock_sender|unsubscribe","filters"?:{...},"sender_email"?:"..."}
+
+Pick email_action when the user says delete / trash / archive / mark as spam / unsubscribe / block, etc. Use filters to describe which emails (e.g. category:"Marketing", sender:"@newsletter.com"). Use sender_email only for block_sender / unblock_sender. "delete" without further qualification means "trash" (reversible); only use delete_forever if the user explicitly says "permanently" or "forever".
+
 Return ONLY the JSON object. No markdown, no explanation.`,
     user: userMessage,
     maxTokens: 512,
@@ -184,6 +188,7 @@ export async function generateChatResponse(
       summary: actionResult.summary,
       replies_sent: actionResult.replies_sent,
       compose_result: actionResult.compose_result,
+      action_result: actionResult.action_result,
       error: actionResult.error,
     })}`,
     maxTokens: 256,

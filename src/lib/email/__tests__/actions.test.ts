@@ -55,9 +55,14 @@ function makeEmail(overrides: Partial<Email> = {}): Email {
     snippet: 'Body text',
     is_read: false,
     is_starred: false,
+    is_trashed: false,
+    is_spam: false,
+    is_archived: false,
     labels: ['INBOX'],
     received_at: new Date().toISOString(),
     direction: 'received',
+    unsubscribe_url: null,
+    unsubscribe_mailto: null,
     summary: null,
     priority: null,
     category: null,
@@ -181,7 +186,7 @@ describe('syncEmails', () => {
           sender: 'a@b.com', senderName: 'A',
           recipient: 'me@b.com', subject: 'Hello',
           body: 'Hi', bodyHtml: '', snippet: 'Hi',
-          receivedAt: new Date(), labels: [], isRead: true, isStarred: false,
+          receivedAt: new Date(), labels: [], isRead: true, isStarred: false, unsubscribeUrl: null, unsubscribeMailto: null,
         },
       ],
     });
@@ -203,7 +208,7 @@ describe('syncEmails', () => {
           sender: 'a@b.com', senderName: 'A',
           recipient: 'me@b.com', subject: 'Hello',
           body: 'Hi', bodyHtml: '', snippet: 'Hi',
-          receivedAt: new Date(), labels: [], isRead: false, isStarred: false,
+          receivedAt: new Date(), labels: [], isRead: false, isStarred: false, unsubscribeUrl: null, unsubscribeMailto: null,
         },
       ],
     });
@@ -234,7 +239,7 @@ describe('syncEmails', () => {
         sender: 'a@b.com', senderName: 'A',
         recipient: 'me@b.com', subject: 'Hello',
         body: 'Hi', bodyHtml: '', snippet: 'Hi',
-        receivedAt: new Date(), labels: [], isRead: true, isStarred: false,
+        receivedAt: new Date(), labels: [], isRead: true, isStarred: false, unsubscribeUrl: null, unsubscribeMailto: null,
       }],
     });
     mockedUpsertEmails.mockResolvedValue([makeEmail({ ai_processed_at: '2024-01-01T00:00:00Z' })]);
@@ -257,8 +262,8 @@ describe('syncEmails', () => {
     mockedGetEmailConnection.mockResolvedValue(makeConnection());
     mockedFetchGmailMessages.mockResolvedValue({
       messages: [
-        { messageId: 'msg-1', threadId: 't-1', sender: 'a@b.com', senderName: 'A', recipient: 'me@b.com', subject: 'S1', body: 'B1', bodyHtml: '', snippet: 'S1', receivedAt: new Date(), labels: [], isRead: false, isStarred: false },
-        { messageId: 'msg-2', threadId: 't-2', sender: 'b@b.com', senderName: 'B', recipient: 'me@b.com', subject: 'S2', body: 'B2', bodyHtml: '', snippet: 'S2', receivedAt: new Date(), labels: [], isRead: false, isStarred: false },
+        { messageId: 'msg-1', threadId: 't-1', sender: 'a@b.com', senderName: 'A', recipient: 'me@b.com', subject: 'S1', body: 'B1', bodyHtml: '', snippet: 'S1', receivedAt: new Date(), labels: [], isRead: false, isStarred: false, unsubscribeUrl: null, unsubscribeMailto: null },
+        { messageId: 'msg-2', threadId: 't-2', sender: 'b@b.com', senderName: 'B', recipient: 'me@b.com', subject: 'S2', body: 'B2', bodyHtml: '', snippet: 'S2', receivedAt: new Date(), labels: [], isRead: false, isStarred: false, unsubscribeUrl: null, unsubscribeMailto: null },
       ],
     });
     mockedUpsertEmails.mockResolvedValue([

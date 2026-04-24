@@ -1,7 +1,21 @@
-import { getEmailsByFilters, upsertEmails, updateEmailAI, logEmailReply, updateLastSync, getEmailConnection, getAllEmailConnections, getExistingMessageIds } from '@/lib/supabase/db';
+import {
+  getEmailsByFilters, upsertEmails, updateEmailAI, logEmailReply, updateLastSync,
+  getEmailConnection, getAllEmailConnections, getConnectionById, getExistingMessageIds,
+  updateEmailFlags, deleteEmailsByIds, getEmailsByIds, getEmailsBySender,
+  insertBlockedSender, deleteBlockedSendersByEmail,
+} from '@/lib/supabase/db';
 import { enrichEmail, generateEmailReply, generateDailySummary } from '@/lib/ai/openai';
-import { fetchGmailMessages, sendGmailReply } from '@/lib/email/gmail';
-import type { Email, EmailFilters, EmailConnection, ActionResult, ReplyAction, SummaryAction } from '@/types';
+import {
+  fetchGmailMessages, sendGmailReply,
+  trashGmailMessages, untrashGmailMessages, deleteGmailMessagesPermanently,
+  markGmailAsSpam, markGmailNotSpam, archiveGmailMessages, unarchiveGmailMessages,
+  markGmailRead, markGmailUnread, starGmailMessages, unstarGmailMessages,
+  createGmailBlockFilter, deleteGmailFilter, sendGmailUnsubscribeEmail,
+} from '@/lib/email/gmail';
+import type {
+  Email, EmailFilters, EmailConnection, ActionResult, ReplyAction, SummaryAction,
+  EmailActionRequest, EmailActionResult,
+} from '@/types';
 import { subDays, startOfDay, endOfDay, startOfWeek, endOfWeek, format } from 'date-fns';
 
 // ============================================================
@@ -68,6 +82,9 @@ export async function syncEmailsForConnection(
       labels: m.labels,
       received_at: m.receivedAt.toISOString(),
       direction: m.direction,
+      unsubscribe_url: m.unsubscribeUrl,
+      unsubscribe_mailto: m.unsubscribeMailto,
+      attachments: m.attachments || [],
     }));
 
     const saved = await upsertEmails(emailRecords);
@@ -252,4 +269,343 @@ export async function getSummary(userId: string, action: SummaryAction): Promise
 
   const summary = await generateDailySummary(userId, summaryEmails);
   return { emails, summary };
+}
+
+// ============================================================
+// MAILBOX ACTIONS — trash / spam / archive / delete / block / unsubscribe
+// ============================================================
+//
+// All mailbox mutations route through here. Responsibilities:
+//   1. Resolve the operand set (by email_ids, by sender_email, or by
+//      filters for chat commands like "delete all marketing emails").
+//   2. Fire the equivalent Gmail API call, grouped by the connection
+//      that owns each message (multi-account users have different
+//      access tokens per account).
+//   3. Mirror the result on the DB side via soft-delete flag columns
+//      so the inbox query can hide trashed/spam/archived rows without
+//      a second round-trip to Gmail.
+//
+// Failures are partial by design — if Gmail accepts 9 of 10 ids we
+// still update the 9 in our DB and surface `failed: 1` to the user.
+
+type ConnBuckets = Map<string, { connection: EmailConnection; messageIds: string[]; rowIds: string[] }>;
+
+async function bucketByConnection(userId: string, emails: Email[]): Promise<ConnBuckets> {
+  const buckets: ConnBuckets = new Map();
+  const connCache = new Map<string, EmailConnection | null>();
+  for (const e of emails) {
+    if (!e.connection_id) continue;
+    if (!connCache.has(e.connection_id)) {
+      connCache.set(e.connection_id, await getConnectionById(e.connection_id, userId));
+    }
+    const conn = connCache.get(e.connection_id);
+    if (!conn) continue;
+    const key = conn.id;
+    const entry = buckets.get(key) || { connection: conn, messageIds: [], rowIds: [] };
+    entry.messageIds.push(e.message_id);
+    entry.rowIds.push(e.id);
+    buckets.set(key, entry);
+  }
+  return buckets;
+}
+
+type GmailOp = (accessToken: string, refreshToken: string, ids: string[]) => Promise<{ affected: number; failed: number }>;
+
+// Shared path for the label-flip actions (trash/spam/archive/read/star +
+// their inverses). Runs the Gmail op per-connection, then updates the DB
+// flag columns in one shot for every row Gmail accepted.
+async function runLabelAction(
+  userId: string,
+  emails: Email[],
+  gmailOp: GmailOp,
+  dbFlags: Parameters<typeof updateEmailFlags>[2],
+): Promise<EmailActionResult> {
+  const buckets = await bucketByConnection(userId, emails);
+  if (buckets.size === 0) return { ok: false, affected: 0, error: 'No matching emails with an active connection.' };
+
+  let affected = 0;
+  let failed = 0;
+  const succeededRowIds: string[] = [];
+
+  for (const { connection, messageIds, rowIds } of Array.from(buckets.values())) {
+    try {
+      const res = await gmailOp(connection.access_token, connection.refresh_token || '', messageIds);
+      affected += res.affected;
+      failed += res.failed;
+      // Best-effort: we don't get per-id status back, so if any succeeded we
+      // flip DB flags for the whole bucket. The Gmail state is the source of
+      // truth — on next sync any mismatched row will re-converge.
+      if (res.affected > 0) succeededRowIds.push(...rowIds);
+    } catch (err) {
+      failed += messageIds.length;
+      console.error('runLabelAction bucket failed:', (err as Error).message);
+    }
+  }
+
+  if (succeededRowIds.length) {
+    await updateEmailFlags(userId, succeededRowIds, dbFlags);
+  }
+  return { ok: affected > 0, affected, failed };
+}
+
+// Resolve the operand emails from whichever of {email_ids, sender_email,
+// filters} the caller supplied. Chat usually supplies filters + sender; the
+// UI usually supplies a single email_id.
+async function resolveOperandEmails(userId: string, req: EmailActionRequest & { filters?: EmailFilters }): Promise<Email[]> {
+  if (req.email_ids?.length) {
+    return getEmailsByIds(userId, req.email_ids);
+  }
+  if (req.sender_email) {
+    return getEmailsBySender(userId, req.sender_email, req.connection_id);
+  }
+  if (req.filters) {
+    // The chat layer passes filters when user says "delete all marketing emails".
+    // Default limit keeps runaway deletes bounded; user can re-run if more.
+    return getEmailsByFilters(userId, { ...req.filters, limit: req.filters.limit || 100 });
+  }
+  return [];
+}
+
+export async function executeEmailAction(
+  userId: string,
+  req: EmailActionRequest & { filters?: EmailFilters },
+): Promise<EmailActionResult> {
+  try {
+    // --- block / unblock: special path. Can work with or without email_ids ---
+    if (req.action === 'block_sender') return blockSender(userId, req);
+    if (req.action === 'unblock_sender') return unblockSender(userId, req);
+
+    const emails = await resolveOperandEmails(userId, req);
+    if (emails.length === 0) {
+      return { ok: false, affected: 0, message: 'No matching emails found.' };
+    }
+
+    switch (req.action) {
+      case 'mark_read':
+        return runLabelAction(userId, emails, markGmailRead, { is_read: true });
+      case 'mark_unread':
+        return runLabelAction(userId, emails, markGmailUnread, { is_read: false });
+      case 'star':
+        return runLabelAction(userId, emails, starGmailMessages, { is_starred: true });
+      case 'unstar':
+        return runLabelAction(userId, emails, unstarGmailMessages, { is_starred: false });
+      case 'archive':
+        return runLabelAction(userId, emails, archiveGmailMessages, { is_archived: true });
+      case 'unarchive':
+        return runLabelAction(userId, emails, unarchiveGmailMessages, { is_archived: false });
+      case 'trash':
+        return runLabelAction(userId, emails, trashGmailMessages, { is_trashed: true });
+      case 'untrash':
+        return runLabelAction(userId, emails, untrashGmailMessages, { is_trashed: false, is_archived: false });
+      case 'spam':
+        return runLabelAction(userId, emails, markGmailAsSpam, { is_spam: true });
+      case 'not_spam':
+        return runLabelAction(userId, emails, markGmailNotSpam, { is_spam: false });
+      case 'delete_forever':
+        return deleteForever(userId, emails);
+      case 'unsubscribe':
+        return unsubscribe(userId, emails);
+      default:
+        return { ok: false, affected: 0, error: `Unsupported action: ${req.action}` };
+    }
+  } catch (err) {
+    return { ok: false, affected: 0, error: (err as Error).message };
+  }
+}
+
+async function deleteForever(userId: string, emails: Email[]): Promise<EmailActionResult> {
+  const buckets = await bucketByConnection(userId, emails);
+  let affected = 0;
+  let failed = 0;
+  const succeededRowIds: string[] = [];
+
+  for (const { connection, messageIds, rowIds } of Array.from(buckets.values())) {
+    try {
+      const res = await deleteGmailMessagesPermanently(
+        connection.access_token, connection.refresh_token || '', messageIds,
+      );
+      affected += res.affected;
+      failed += res.failed;
+      if (res.affected > 0) succeededRowIds.push(...rowIds);
+    } catch (err) {
+      failed += messageIds.length;
+      console.error('deleteForever bucket failed:', (err as Error).message);
+    }
+  }
+  if (succeededRowIds.length) await deleteEmailsByIds(userId, succeededRowIds);
+  return { ok: affected > 0, affected, failed };
+}
+
+// Unsubscribe strategy per email:
+//   1. Prefer mailto: target — fire a send from the connection that received
+//      this email. This is usually the fastest and doesn't require user action.
+//   2. If no mailto but we have a URL, add it to `unsubscribe_urls` so the
+//      client opens the sender's landing page in a new tab.
+//   3. If neither, the email doesn't support List-Unsubscribe; skip it.
+// In every successful case we also move the email to trash so it disappears
+// from the inbox and the sender's future mail (post-processing) is easier to
+// block if the unsubscribe is ignored.
+async function unsubscribe(userId: string, emails: Email[]): Promise<EmailActionResult> {
+  const urlsToOpen: string[] = [];
+  const mailtoTargets: Array<{ connection: EmailConnection; mailto: string; rowId: string }> = [];
+  const rowsToTrash: string[] = [];
+
+  const connCache = new Map<string, EmailConnection | null>();
+  const loadConn = async (id: string) => {
+    if (!connCache.has(id)) connCache.set(id, await getConnectionById(id, userId));
+    return connCache.get(id) || null;
+  };
+
+  for (const e of emails) {
+    if (e.unsubscribe_mailto && e.connection_id) {
+      const conn = await loadConn(e.connection_id);
+      if (conn) mailtoTargets.push({ connection: conn, mailto: e.unsubscribe_mailto, rowId: e.id });
+      continue;
+    }
+    if (e.unsubscribe_url) {
+      urlsToOpen.push(e.unsubscribe_url);
+      rowsToTrash.push(e.id);
+    }
+  }
+
+  if (mailtoTargets.length === 0 && urlsToOpen.length === 0) {
+    return { ok: false, affected: 0, message: 'None of the selected emails support one-click unsubscribe.' };
+  }
+
+  // De-duplicate mailto targets within the same account — a newsletter sent
+  // 20 emails, we only need one unsubscribe.
+  const seen = new Set<string>();
+  let affected = 0;
+  let failed = 0;
+  const trashRowIds: string[] = [...rowsToTrash];
+  const trashBuckets: ConnBuckets = new Map();
+
+  for (const { connection, mailto, rowId } of mailtoTargets) {
+    const key = `${connection.id}|${mailto.toLowerCase()}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      try {
+        await sendGmailUnsubscribeEmail(connection.access_token, connection.refresh_token || '', mailto);
+        affected++;
+      } catch (err) {
+        failed++;
+        console.error('unsubscribe mailto failed:', (err as Error).message);
+        continue;
+      }
+    }
+    trashRowIds.push(rowId);
+  }
+
+  // Trash the unsubscribed emails per-connection.
+  const toTrash = await getEmailsByIds(userId, Array.from(new Set(trashRowIds)));
+  const buckets = await bucketByConnection(userId, toTrash);
+  for (const { connection, messageIds, rowIds } of Array.from(buckets.values())) {
+    try {
+      await trashGmailMessages(connection.access_token, connection.refresh_token || '', messageIds);
+      trashBuckets.set(connection.id, { connection, messageIds, rowIds });
+    } catch (err) {
+      console.error('unsubscribe trash bucket failed:', (err as Error).message);
+    }
+  }
+  const allTrashRows: string[] = [];
+  Array.from(trashBuckets.values()).forEach((b) => allTrashRows.push(...b.rowIds));
+  if (allTrashRows.length) await updateEmailFlags(userId, allTrashRows, { is_trashed: true });
+
+  // URL-only counts toward affected too — the user will open them next.
+  affected += urlsToOpen.length;
+
+  return {
+    ok: affected > 0,
+    affected,
+    failed,
+    unsubscribe_urls: urlsToOpen.length ? Array.from(new Set(urlsToOpen)) : undefined,
+    message: urlsToOpen.length
+      ? `Unsubscribed ${affected - urlsToOpen.length}. Open the returned URL(s) to finish the rest.`
+      : undefined,
+  };
+}
+
+// Normalise to the bare email address Gmail expects in a filter's `from:`
+// criterion. Drops display names like `Acme <alerts@acme.com>` → `alerts@acme.com`.
+function normaliseSenderEmail(raw: string): string {
+  const match = raw.match(/<([^>]+)>/);
+  return (match ? match[1] : raw).trim().toLowerCase();
+}
+
+async function blockSender(userId: string, req: EmailActionRequest & { filters?: EmailFilters }): Promise<EmailActionResult> {
+  // Resolve sender: explicit in request, or derived from email_ids.
+  let senderEmail = req.sender_email ? normaliseSenderEmail(req.sender_email) : '';
+  if (!senderEmail && req.email_ids?.length) {
+    const rows = await getEmailsByIds(userId, req.email_ids);
+    if (rows[0]) senderEmail = normaliseSenderEmail(rows[0].sender);
+  }
+  if (!senderEmail) return { ok: false, affected: 0, error: 'No sender to block.' };
+
+  // Which connections to apply to. If scoped, just that one; else every active Gmail.
+  const connections = req.connection_id
+    ? [await getConnectionById(req.connection_id, userId)].filter(Boolean) as EmailConnection[]
+    : (await getAllEmailConnections(userId)).filter((c) => c.provider === 'gmail');
+
+  if (connections.length === 0) return { ok: false, affected: 0, error: 'No Gmail connection to apply the block on.' };
+
+  let affected = 0;
+  let failed = 0;
+  for (const conn of connections) {
+    try {
+      const { filterId } = await createGmailBlockFilter(conn.access_token, conn.refresh_token || '', senderEmail);
+      await insertBlockedSender({
+        user_id: userId,
+        connection_id: conn.id,
+        sender_email: senderEmail,
+        gmail_filter_id: filterId || null,
+      });
+      affected++;
+    } catch (err) {
+      failed++;
+      console.error('blockSender connection failed:', (err as Error).message);
+    }
+  }
+
+  // Retroactively move existing inbox mail from this sender to spam so the
+  // user doesn't have to manually clean up what arrived before the block.
+  const existing = await getEmailsBySender(userId, senderEmail, req.connection_id);
+  if (existing.length > 0) {
+    await runLabelAction(userId, existing, markGmailAsSpam, { is_spam: true });
+  }
+
+  return {
+    ok: affected > 0,
+    affected,
+    failed,
+    message: `Blocked ${senderEmail} on ${affected} account${affected === 1 ? '' : 's'}.`,
+  };
+}
+
+async function unblockSender(userId: string, req: EmailActionRequest): Promise<EmailActionResult> {
+  const senderEmail = req.sender_email ? normaliseSenderEmail(req.sender_email) : '';
+  if (!senderEmail) return { ok: false, affected: 0, error: 'sender_email required.' };
+
+  const rows = await deleteBlockedSendersByEmail(userId, senderEmail, req.connection_id);
+  if (rows.length === 0) return { ok: false, affected: 0, message: `${senderEmail} wasn't blocked.` };
+
+  // Revoke each Gmail filter so future mail flows back to inbox.
+  let failed = 0;
+  for (const row of rows) {
+    if (!row.gmail_filter_id || !row.connection_id) continue;
+    const conn = await getConnectionById(row.connection_id, userId);
+    if (!conn) continue;
+    try {
+      await deleteGmailFilter(conn.access_token, conn.refresh_token || '', row.gmail_filter_id);
+    } catch (err) {
+      failed++;
+      console.error('unblockSender filter delete failed:', (err as Error).message);
+    }
+  }
+
+  return {
+    ok: true,
+    affected: rows.length,
+    failed: failed || undefined,
+    message: `Unblocked ${senderEmail}.`,
+  };
 }

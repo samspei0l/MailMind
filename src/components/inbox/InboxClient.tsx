@@ -3,9 +3,20 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { Email, EmailFilters, EmailConnection } from '@/types';
 import { formatDistanceToNow } from 'date-fns';
-import { Search, Filter, X, Mail, RefreshCw, Reply, Sparkles } from 'lucide-react';
+import { Search, Filter, X, Mail, RefreshCw, Reply, Sparkles, Star, Paperclip } from 'lucide-react';
 import EmailDetailPanel from './EmailDetailPanel';
 import dynamic from 'next/dynamic';
+
+// Stable colour pick for sender-initial avatars — matches the design prototype.
+const AVATAR_COLORS = ['#004E6E', '#8DC63F', '#3B82F6', '#8B5CF6', '#EC4899', '#F59E0B', '#10B981'];
+function avatarInitials(name: string) {
+  return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+}
+function avatarColor(name: string) {
+  let h = 0;
+  for (const c of name) h = ((h << 5) - h) + c.charCodeAt(0);
+  return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
+}
 
 const ComposeModal = dynamic(() => import('@/components/compose/ComposeModal'), { ssr: false });
 
@@ -40,6 +51,7 @@ export default function InboxClient({ initialEmails, initialFilters }: Props) {
   const [composeOpen, setComposeOpen] = useState(false);
   // When set to an email id, EmailDetailPanel opens directly into AI-reply mode
   const [replyForId, setReplyForId] = useState<string | null>(null);
+  const [starred, setStarred] = useState<Set<string>>(new Set());
 
   function openEmail(email: Email, reply = false) {
     setSelectedEmail((prev) => (prev?.id === email.id && !reply ? null : email));
@@ -84,19 +96,15 @@ export default function InboxClient({ initialEmails, initialFilters }: Props) {
   return (
     <div className="flex h-full overflow-hidden">
       {/* Email list */}
-      <div className={`flex flex-col ${selectedEmail ? 'w-[400px] flex-shrink-0' : 'flex-1'} border-r border-border`}>
+      <div className={`flex flex-col ${selectedEmail ? 'w-[360px] flex-shrink-0' : 'flex-1'} bg-card border-r border-border`}>
         {/* Header */}
-        <div className="px-5 py-3.5 border-b border-border bg-background/80 backdrop-blur-sm">
+        <div className="px-4 pt-4 pb-3 border-b border-border">
           <div className="flex items-center justify-between mb-3">
-            <div>
-              <h1 className="text-lg font-semibold text-foreground">Inbox</h1>
-              <p className="text-xs text-muted-foreground">{emails.length} messages</p>
-            </div>
+            <h1 className="text-[19px] font-bold text-foreground tracking-tight">Inbox</h1>
             <div className="flex items-center gap-2">
-              <button onClick={() => setComposeOpen(true)} disabled={connections.length === 0}
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-all disabled:opacity-40">
-                + Compose
-              </button>
+              <span className="text-xs font-medium text-muted-foreground bg-muted px-2.5 py-[3px] rounded-full">
+                {emails.length} messages
+              </span>
               <button onClick={() => setShowFilters(!showFilters)}
                 className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-all ${showFilters || activeCount > 0 ? 'bg-primary/10 border-primary/20 text-primary' : 'border-border text-muted-foreground hover:text-foreground'}`}>
                 <Filter className="w-3 h-3" />
@@ -110,11 +118,11 @@ export default function InboxClient({ initialEmails, initialFilters }: Props) {
 
           {/* Search */}
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+            <Search className="absolute left-[11px] top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
             <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && applyFilters({ ...filters, search: search || undefined })}
-              placeholder="Search emails..."
-              className="w-full bg-muted/50 border border-border rounded-lg pl-8 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring/50 transition-all" />
+              placeholder="Search messages…"
+              className="w-full bg-muted border border-border rounded-[9px] pl-[33px] pr-4 py-2 text-[13px] text-foreground outline-none focus:border-primary transition-colors" />
             {search && (
               <button onClick={() => { setSearch(''); applyFilters({ ...filters, search: undefined }); }} className="absolute right-3 top-1/2 -translate-y-1/2">
                 <X className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground" />
@@ -196,58 +204,107 @@ export default function InboxClient({ initialEmails, initialFilters }: Props) {
               <p className="text-sm text-muted-foreground mt-1">Try syncing or adjusting your filters</p>
             </div>
           )}
-          {!loading && emails.map((email) => {
-            // Show account color dot if multiple accounts
-            const conn = connections.find((c) => c.id === email.connection_id);
+          {!loading && emails.map((email, i) => {
+            const active = selectedEmail?.id === email.id;
+            const displayName = email.sender_name || email.sender;
+            const isStarred = starred.has(email.id);
             return (
               <div key={email.id}
                 role="button" tabIndex={0}
                 onClick={() => openEmail(email)}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEmail(email); } }}
-                className={`w-full text-left px-4 py-3.5 border-b border-border/50 hover:bg-muted/30 transition-colors cursor-pointer ${selectedEmail?.id === email.id ? 'bg-primary/5 border-l-2 border-l-primary' : ''} ${!email.is_read ? 'bg-blue-50/30 dark:bg-blue-950/10' : ''}`}>
+                className="cursor-pointer border-b border-border"
+                style={{
+                  padding: '13px 14px 11px',
+                  background: active
+                    ? 'rgba(0,78,110,0.06)'
+                    : !email.is_read ? 'rgba(141,198,63,0.04)' : 'hsl(var(--card))',
+                  borderLeft: active ? '3px solid hsl(var(--brand-teal))' : '3px solid transparent',
+                  transition: 'background 0.1s',
+                  animation: `fadeUp 0.15s ${Math.min(i, 12) * 0.03}s both`,
+                }}
+                onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = 'rgba(0,78,110,0.03)'; }}
+                onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = !email.is_read ? 'rgba(141,198,63,0.04)' : 'hsl(var(--card))'; }}
+              >
                 <div className="flex items-start gap-2.5">
-                  {/* Account color + unread dot */}
-                  <div className="flex flex-col items-center gap-1 mt-1.5 flex-shrink-0">
-                    {conn && connections.length > 1 && (
-                      <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: conn.color }} title={conn.nickname || conn.email} />
-                    )}
-                    {!email.is_read
-                      ? <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" />
-                      : <div className="w-1.5 h-1.5 rounded-full" />}
+                  {/* Sender avatar — coloured initials circle */}
+                  <div
+                    className="w-9 h-9 rounded-full flex items-center justify-center text-[12px] font-bold text-white flex-shrink-0 mt-[1px]"
+                    style={{ background: avatarColor(displayName) }}
+                  >
+                    {avatarInitials(displayName)}
                   </div>
+
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2 mb-0.5">
-                      <span className={`text-sm truncate ${!email.is_read ? 'font-semibold text-foreground' : 'font-medium text-foreground/80'}`}>
-                        {email.sender_name || email.sender}
+                      <span className="truncate text-foreground"
+                        style={{ fontSize: 13.5, fontWeight: email.is_read ? 500 : 700, maxWidth: '70%' }}>
+                        {displayName}
                       </span>
-                      <span className="text-xs text-muted-foreground flex-shrink-0">
-                        {formatDistanceToNow(new Date(email.received_at), { addSuffix: true })}
-                      </span>
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        {email.attachments && email.attachments.filter((a) => !a.inline).length > 0 && (
+                          <Paperclip className="w-3 h-3 text-muted-foreground" aria-label="Has attachments" />
+                        )}
+                        <span className="text-[11.5px] text-muted-foreground">
+                          {formatDistanceToNow(new Date(email.received_at), { addSuffix: true })}
+                        </span>
+                      </div>
                     </div>
-                    <p className={`text-sm truncate mb-1 ${!email.is_read ? 'text-foreground' : 'text-foreground/70'}`}>{email.subject}</p>
-                    <p className="text-xs text-muted-foreground truncate">{email.snippet || email.summary}</p>
-                    <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+
+                    <div className="flex items-center gap-1.5 mb-[3px]">
+                      {!email.is_read && (
+                        <span className="w-[7px] h-[7px] rounded-full flex-shrink-0" style={{ background: 'hsl(var(--brand-teal))' }} />
+                      )}
+                      <p className="truncate text-foreground flex-1"
+                        style={{ fontSize: 13, fontWeight: email.is_read ? 400 : 600 }}>
+                        {email.subject}
+                      </p>
+                    </div>
+
+                    <p className="text-[12px] text-muted-foreground truncate mb-[7px]">
+                      {email.snippet || email.summary}
+                    </p>
+
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       {email.priority && (
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${PRIORITY_LABELS[email.priority]?.cls}`}>
+                        <span className={`text-[10.5px] font-semibold px-1.5 py-[2px] rounded-full ${PRIORITY_LABELS[email.priority]?.cls}`}>
                           {PRIORITY_LABELS[email.priority]?.label}
                         </span>
                       )}
                       {email.category && (
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${CATEGORY_COLORS[email.category] || CATEGORY_COLORS.Other}`}>
+                        <span className={`text-[10.5px] font-medium px-1.5 py-[2px] rounded-full ${CATEGORY_COLORS[email.category] || CATEGORY_COLORS.Other}`}>
                           {email.category}
                         </span>
                       )}
                       {email.requires_reply && (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 font-medium flex items-center gap-1">
+                        <span className="text-[10.5px] font-semibold px-1.5 py-[2px] rounded-full bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 flex items-center gap-1 ml-auto">
                           <Reply className="w-2.5 h-2.5" /> Reply needed
                         </span>
                       )}
                       <button
                         onClick={(e) => { e.stopPropagation(); openEmail(email, true); }}
-                        className="ml-auto inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 font-medium transition-colors"
+                        className={`inline-flex items-center gap-1 text-[10.5px] px-2 py-[2px] rounded-full border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 font-semibold transition-colors ${email.requires_reply ? '' : 'ml-auto'}`}
                         title="Draft a reply with AI"
                       >
-                        <Sparkles className="w-3 h-3" /> Reply with AI
+                        <Sparkles className="w-2.5 h-2.5" /> Reply with AI
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setStarred((s) => {
+                            const ns = new Set(s);
+                            ns.has(email.id) ? ns.delete(email.id) : ns.add(email.id);
+                            return ns;
+                          });
+                        }}
+                        className="p-0.5"
+                        title={isStarred ? 'Unstar' : 'Star'}
+                      >
+                        <Star
+                          className="w-[13px] h-[13px]"
+                          fill={isStarred ? '#F59E0B' : 'transparent'}
+                          color={isStarred ? '#F59E0B' : 'hsl(var(--muted-foreground))'}
+                        />
                       </button>
                     </div>
                   </div>

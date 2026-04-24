@@ -7,7 +7,7 @@ export type EmailCategory = 'Sales' | 'Client' | 'Internal' | 'Finance' | 'Marke
 export type EmailType = 'New Request' | 'Reply Received' | 'Quotation' | 'Complaint' | 'Update' | 'Other';
 export type EmailProvider = 'gmail' | 'outlook' | 'yahoo' | 'icloud' | 'other';
 export type ChatRole = 'user' | 'assistant';
-export type ActionType = 'filter' | 'reply' | 'summary' | 'search' | 'compose';
+export type ActionType = 'filter' | 'reply' | 'summary' | 'search' | 'compose' | 'email_action';
 export type EmailTone = 'professional' | 'friendly' | 'formal' | 'assertive' | 'concise' | 'apologetic' | 'persuasive';
 export type ComposedEmailStatus = 'draft' | 'sent' | 'failed';
 
@@ -79,6 +79,9 @@ export interface Email {
   labels: string[] | null;
   received_at: string;
   direction: 'received' | 'sent';
+  // RFC 2369 / 8058 unsubscribe targets parsed from the List-Unsubscribe header
+  unsubscribe_url: string | null;
+  unsubscribe_mailto: string | null;
   // AI enrichment
   summary: string | null;
   priority: EmailPriority | null;
@@ -88,6 +91,9 @@ export interface Email {
   intent: string | null;
   suggested_reply: string | null;
   ai_processed_at: string | null;
+  /** Gmail attachment metadata — see EmailAttachment. Bytes fetched on demand.
+   *  Optional because rows synced before the 009 migration won't have it. */
+  attachments?: EmailAttachment[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -233,7 +239,8 @@ export type EmailActionType =
   | 'not_spam'
   | 'delete_forever'
   | 'block_sender'
-  | 'unblock_sender';
+  | 'unblock_sender'
+  | 'unsubscribe';
 
 export interface EmailActionRequest {
   action: EmailActionType;
@@ -255,6 +262,10 @@ export interface EmailActionResult {
   failed?: number;
   error?: string;
   message?: string;
+  // After an 'unsubscribe' action: URL targets we couldn't honour
+  // server-side (no mailto available). The client opens each in a
+  // new tab so the user lands on the sender's unsubscribe page.
+  unsubscribe_urls?: string[];
 }
 
 export interface BlockedSender {
@@ -299,13 +310,29 @@ export interface ComposeAction {
   from_connection_id?: string;
 }
 
-export type ActionPayload = FilterAction | ReplyAction | SummaryAction | SearchAction | ComposeAction;
+// Chat-driven mailbox mutation — "delete all marketing emails",
+// "unsubscribe from newsletters", "block alerts@foo.com". The action
+// layer resolves `filters` → concrete email_ids before mutating.
+export interface EmailActionPayload {
+  action: 'email_action';
+  email_action: EmailActionType;
+  email_ids?: string[];
+  sender_email?: string;
+  connection_id?: string;
+  filters?: EmailFilters;
+}
+
+export type ActionPayload = FilterAction | ReplyAction | SummaryAction | SearchAction | ComposeAction | EmailActionPayload;
 
 export interface ActionResult {
   emails?: Email[];
   summary?: string;
   replies_sent?: number;
   compose_result?: ComposeResult;
+  // Filled when the chat runs a mailbox mutation. `affected` is how many
+  // stored emails were updated; `action` echoes back what ran so the UI
+  // can render the right past-tense message ("12 emails moved to trash").
+  action_result?: EmailActionResult & { action?: EmailActionType };
   error?: string;
   message?: string;
 }
@@ -351,16 +378,29 @@ export interface GmailMessage {
   threadId: string;
   labelIds: string[];
   snippet: string;
-  payload: {
-    headers: Array<{ name: string; value: string }>;
-    body: { data?: string; size: number };
-    parts?: Array<{
-      mimeType: string;
-      body: { data?: string; size: number };
-      parts?: Array<{ mimeType: string; body: { data?: string; size: number } }>;
-    }>;
-  };
+  payload: GmailPart;
   internalDate: string;
+}
+
+export interface GmailPart {
+  partId?: string;
+  filename?: string;
+  mimeType?: string;
+  headers?: Array<{ name: string; value: string }>;
+  body: { data?: string; size: number; attachmentId?: string };
+  parts?: GmailPart[];
+}
+
+export interface EmailAttachment {
+  filename: string;
+  mimeType: string;
+  size: number;
+  /** Gmail API handle used to fetch the bytes on demand. */
+  attachmentId: string;
+  /** Path inside the MIME tree, useful for debugging. */
+  partId: string;
+  /** true for attachments referenced inline in the HTML (e.g. signatures). */
+  inline?: boolean;
 }
 
 export interface ParsedEmail {
@@ -377,6 +417,9 @@ export interface ParsedEmail {
   labels: string[];
   isRead: boolean;
   isStarred: boolean;
+  unsubscribeUrl: string | null;
+  unsubscribeMailto: string | null;
+  attachments?: EmailAttachment[];
 }
 
 // ============================================================

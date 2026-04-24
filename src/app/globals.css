@@ -4,36 +4,47 @@
 
 @layer base {
   :root {
-    --background: 220 20% 97%;
-    --foreground: 222 47% 11%;
+    /* Brand — sourced from the MailMind logo */
+    --brand-teal:  199 100% 22%;  /* #004E6E */
+    --brand-tealD: 200 100% 16%;  /* #003A52 */
+    --brand-tealL: 202 100% 27%;  /* #005F87 */
+    --brand-lime:  82  53%  51%;  /* #8DC63F */
+    --brand-limeD: 85  55%  40%;  /* #72A030 */
+    --brand-limeL: 82  60%  59%;  /* #A3D45A */
+    --brand-green: 144 61%  26%;  /* #1A6B3C — royal green used in sidebar */
+    --brand-greenD:145 65%  20%;  /* deeper royal green for borders */
+
+    --background: 210 20% 96%;     /* #F0F2F5 */
+    --foreground: 217 33% 15%;     /* #1A2332 */
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    --card-foreground: 217 33% 15%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
-    --primary: 221 83% 53%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 220 14% 93%;
-    --secondary-foreground: 222 47% 11%;
-    --muted: 220 14% 93%;
+    --popover-foreground: 217 33% 15%;
+
+    --primary: var(--brand-teal);
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 17% 93%;
+    --secondary-foreground: 217 33% 15%;
+    --muted: 210 17% 93%;
     --muted-foreground: 215 16% 47%;
-    --accent: 221 83% 96%;
-    --accent-foreground: 221 83% 40%;
+    --accent: var(--brand-lime);
+    --accent-foreground: 0 0% 100%;
     --destructive: 0 84% 60%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 221 83% 53%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 216 12% 90%;         /* #E3E6EA */
+    --input: 216 12% 90%;
+    --ring: var(--brand-teal);
     --radius: 0.625rem;
 
-    /* Custom tokens */
-    --sidebar-bg: 222 47% 11%;
-    --sidebar-fg: 210 40% 85%;
-    --sidebar-accent: 221 83% 53%;
-    --sidebar-border: 222 47% 16%;
+    /* Sidebar — navy/teal blue from the logo */
+    --sidebar-bg:     var(--brand-teal);
+    --sidebar-fg:     0 0% 100%;
+    --sidebar-accent: var(--brand-lime);
+    --sidebar-border: var(--brand-tealD);
 
-    --priority-high: 0 84% 60%;
+    --priority-high:   0 84% 60%;
     --priority-medium: 38 92% 50%;
-    --priority-low: 142 71% 45%;
+    --priority-low:    142 71% 45%;
 
     --font-display: 'DM Serif Display', serif;
     --font-mono: 'DM Mono', monospace;
@@ -46,31 +57,31 @@
     --card-foreground: 210 40% 96%;
     --popover: 222 47% 11%;
     --popover-foreground: 210 40% 96%;
-    --primary: 221 83% 60%;
-    --primary-foreground: 222 47% 8%;
+    --primary: var(--brand-teal);
+    --primary-foreground: 0 0% 100%;
     --secondary: 222 47% 15%;
     --secondary-foreground: 210 40% 96%;
     --muted: 222 47% 15%;
     --muted-foreground: 215 16% 60%;
-    --accent: 221 83% 15%;
-    --accent-foreground: 221 83% 70%;
+    --accent: var(--brand-lime);
+    --accent-foreground: 0 0% 100%;
     --destructive: 0 62% 50%;
     --destructive-foreground: 210 40% 96%;
     --border: 222 47% 18%;
     --input: 222 47% 18%;
-    --ring: 221 83% 60%;
+    --ring: var(--brand-teal);
   }
 }
 
 @layer base {
   * { @apply border-border; }
-  body { @apply bg-background text-foreground font-sans; }
-  
-  /* Scrollbar styling */
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  body { @apply bg-background text-foreground font-sans; font-family: 'Inter', system-ui, sans-serif; }
+
+  /* Scrollbar — slim, subtle, matches the design prototype */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
   ::-webkit-scrollbar-track { @apply bg-transparent; }
-  ::-webkit-scrollbar-thumb { @apply bg-border rounded-full; }
-  ::-webkit-scrollbar-thumb:hover { @apply bg-muted-foreground/30; }
+  ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 10px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.22); }
 }
 
 @layer components {
@@ -95,30 +106,175 @@
   }
 
   .chat-bubble-user {
-    @apply bg-primary text-primary-foreground rounded-2xl rounded-br-sm px-4 py-3 max-w-[80%] ml-auto;
+    background: hsl(var(--brand-teal));
+    color: #fff;
+    @apply rounded-2xl rounded-br-sm px-4 py-3 max-w-[80%] ml-auto;
   }
   .chat-bubble-assistant {
-    @apply bg-card border border-border rounded-2xl rounded-bl-sm px-4 py-3 max-w-[90%];
+    @apply bg-card border border-border rounded-2xl rounded-bl-sm px-4 py-3 max-w-[90%] shadow-sm;
   }
 
   .glass-card {
     @apply bg-white/60 dark:bg-white/5 backdrop-blur-sm border border-white/20 dark:border-white/10;
   }
+
+  /* AI analysis card — teal → lime gradient from the design */
+  .ai-card {
+    background: linear-gradient(135deg, rgba(0,78,110,0.05) 0%, rgba(141,198,63,0.06) 100%);
+    border: 1px solid rgba(0,78,110,0.12);
+  }
 }
 
-/* Chat typing indicator */
+/* ─── Email body — Gmail/Outlook-style polished rendering ─── */
+.email-body {
+  /* Keep senders' inline styles from busting the layout. */
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+.email-body a {
+  color: hsl(var(--brand-tealL));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.email-body a:hover { color: hsl(var(--brand-teal)); }
+.email-body p { margin: 0 0 12px; }
+.email-body p:last-child { margin-bottom: 0; }
+.email-body h1, .email-body h2, .email-body h3, .email-body h4 {
+  color: hsl(var(--foreground));
+  font-weight: 700;
+  margin: 20px 0 10px;
+  line-height: 1.3;
+}
+.email-body h1 { font-size: 20px; }
+.email-body h2 { font-size: 17px; }
+.email-body h3 { font-size: 15px; }
+.email-body h4 { font-size: 14px; }
+.email-body ul, .email-body ol { margin: 0 0 12px; padding-left: 24px; }
+.email-body li { margin-bottom: 4px; }
+.email-body img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  display: inline-block;
+}
+/* If an image has no resolvable src (cid:, blocked, empty) the browser
+   would otherwise draw a grey broken-image box + alt text. Hide it. */
+.email-body img:not([src]),
+.email-body img[src=""],
+.email-body img[src^="cid:"] { display: none !important; }
+.email-body [data-stripped-img] { display: none !important; }
+.email-body figure { margin: 12px 0; }
+.email-body blockquote {
+  margin: 12px 0;
+  padding: 6px 14px;
+  border-left: 3px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+  background: rgba(0,0,0,0.02);
+  border-radius: 0 6px 6px 0;
+}
+.email-body blockquote blockquote {
+  border-left-color: hsl(var(--border));
+  opacity: 0.85;
+}
+.email-body pre, .email-body code {
+  font-family: 'ui-monospace', 'SFMono-Regular', 'Menlo', monospace;
+  font-size: 12.5px;
+}
+.email-body pre {
+  background: hsl(var(--muted));
+  padding: 10px 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+.email-body code { background: hsl(var(--muted)); padding: 1px 5px; border-radius: 4px; }
+.email-body pre code { background: transparent; padding: 0; }
+.email-body hr {
+  border: none;
+  border-top: 1px solid hsl(var(--border));
+  margin: 16px 0;
+}
+/* Tables in HTML emails are almost always used for LAYOUT, not data — so
+   we treat them as invisible containers by default. Borders only render
+   when the sender explicitly sets border="1+" or border-collapse:collapse
+   with explicit border styles. This keeps stripped-image wrappers from
+   showing up as empty boxes, which is what marketing templates nest.*/
+.email-body table {
+  border-collapse: collapse;
+  margin: 0;
+  max-width: 100%;
+  border: 0;
+}
+.email-body th, .email-body td {
+  padding: 0;
+  text-align: left;
+  vertical-align: top;
+  border: 0;
+}
+/* Data tables: only apply visible borders when the sender asked for them. */
+.email-body table[border]:not([border="0"]) {
+  border: 1px solid hsl(var(--border));
+  margin: 12px 0;
+}
+.email-body table[border]:not([border="0"]) th,
+.email-body table[border]:not([border="0"]) td {
+  border: 1px solid hsl(var(--border));
+  padding: 6px 10px;
+}
+.email-body table[border]:not([border="0"]) th {
+  background: hsl(var(--muted));
+  font-weight: 600;
+}
+/* Strip marketing-email hacks that break our layout: absolute widths
+   wider than the container and fixed sizing on wrappers. */
+.email-body [width]:not(img):not(td):not(th) { width: auto !important; }
+.email-body table[width] { width: 100% !important; max-width: 100% !important; }
+.email-body * { max-width: 100%; }
+/* Hide empty wrappers left behind when we strip cid:/tracker images.
+   :empty only matches elements with no children and no text, so real
+   content is unaffected. */
+.email-body td:empty,
+.email-body th:empty,
+.email-body tr:empty,
+.email-body div:empty,
+.email-body p:empty,
+.email-body span:empty {
+  display: none !important;
+}
+
+/* ─── Animations from the design prototype ─── */
+@keyframes slideIn   { from { opacity:0; transform: translateX(22px); } to { opacity:1; transform: translateX(0); } }
+@keyframes fadeUp    { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform: translateY(0); } }
+@keyframes modalIn   { from { opacity:0; transform: scale(0.96) translateY(12px); } to { opacity:1; transform: scale(1) translateY(0); } }
+@keyframes navPop    { 0%{transform:scaleY(0);opacity:0} 60%{transform:scaleY(1.12)} 100%{transform:scaleY(1);opacity:1} }
+@keyframes thinkDot  { 0%,80%,100%{transform:translateY(0);opacity:0.3} 40%{transform:translateY(-5px);opacity:1} }
+@keyframes thinkScan { 0%{width:0%;opacity:0.7} 60%{width:85%;opacity:1} 100%{width:100%;opacity:0.4} }
+@keyframes shimmer   { 0%{background-position:-400px 0} 100%{background-position:400px 0} }
+
+.mm-slide-in { animation: slideIn 0.26s cubic-bezier(.22,.68,0,1.2) both; }
+.mm-fade-up  { animation: fadeUp 0.2s cubic-bezier(.22,.68,0,1.1) both; }
+.mm-modal-in { animation: modalIn 0.22s cubic-bezier(.22,.68,0,1.15) both; }
+.mm-nav-pop  { animation: navPop 0.28s cubic-bezier(.22,.68,0,1.3) both; transform-origin: top; }
+.mm-think-scan { animation: thinkScan 1.8s ease-in-out infinite; }
+
+/* Chat typing indicator (legacy 3-dot — kept for backwards compat) */
 @keyframes typing-dot {
   0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
   30% { transform: translateY(-6px); opacity: 1; }
 }
-
 .typing-dot:nth-child(1) { animation: typing-dot 1.2s ease infinite 0ms; }
 .typing-dot:nth-child(2) { animation: typing-dot 1.2s ease infinite 150ms; }
 .typing-dot:nth-child(3) { animation: typing-dot 1.2s ease infinite 300ms; }
 
+/* Thinking dots — used in the AI chat loading bubble */
+.mm-think-dot { animation: thinkDot 1.3s ease-in-out infinite; }
+.mm-think-dot:nth-child(1) { animation-delay: 0s; }
+.mm-think-dot:nth-child(2) { animation-delay: 0.2s; }
+.mm-think-dot:nth-child(3) { animation-delay: 0.4s; }
+
 /* Shimmer loading */
 .shimmer {
   background: linear-gradient(90deg, hsl(var(--muted)) 25%, hsl(var(--border)) 50%, hsl(var(--muted)) 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
+  background-size: 400px 100%;
+  animation: shimmer 1.4s infinite;
 }

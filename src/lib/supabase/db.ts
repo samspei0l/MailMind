@@ -1,6 +1,6 @@
 import { createSupabaseAdminClient } from './server';
 import type {
-  Email, EmailFilters, EmailConnection, ChatMessage, ChatSession, ComposedEmail, Profile,
+  Email, EmailFilters, EmailConnection, ChatMessage, ChatSession, ComposedEmail, Profile, BlockedSender,
 } from '@/types';
 import { MAX_EMAIL_ACCOUNTS } from '@/types';
 
@@ -209,6 +209,21 @@ export async function getEmailsByFilters(userId: string, filters: EmailFilters):
   if (filters.date_from) q = q.gte('received_at', filters.date_from);
   if (filters.date_to) q = q.lte('received_at', filters.date_to);
   if (filters.search) q = q.or(`subject.ilike.%${filters.search}%,body.ilike.%${filters.search}%,sender.ilike.%${filters.search}%`);
+
+  // Mailbox view — default is inbox (hide trashed/spam/archived so they
+  // don't clutter the main list). Dedicated buckets scope to one flag.
+  // 'all' skips every status filter for debug/admin surfaces.
+  const view = filters.view || 'inbox';
+  if (view === 'inbox') {
+    q = q.eq('is_trashed', false).eq('is_spam', false).eq('is_archived', false);
+  } else if (view === 'trash') {
+    q = q.eq('is_trashed', true);
+  } else if (view === 'spam') {
+    q = q.eq('is_spam', true);
+  } else if (view === 'archive') {
+    q = q.eq('is_archived', true).eq('is_trashed', false).eq('is_spam', false);
+  }
+
   q = q.limit(filters.limit || 50);
   const { data, error } = await q;
   if (error) throw new Error(`getEmailsByFilters: ${error.message}`);
@@ -282,6 +297,122 @@ export async function getThreadMessages(userId: string, threadId: string): Promi
 export async function updateEmailAI(emailId: string, enrichment: Partial<Email>) {
   const { error } = await supabase.from('emails').update({ ...enrichment, ai_processed_at: new Date().toISOString() }).eq('id', emailId);
   if (error) throw new Error(`updateEmailAI: ${error.message}`);
+}
+
+// ============================================================
+// MAILBOX MUTATION HELPERS
+// ============================================================
+//
+// These mirror the Gmail label changes on the DB side. The action layer
+// first flips the Gmail labels (source of truth), then calls these so the
+// cached inbox list stays in sync and default queries filter trashed /
+// spam / archived rows. Scoped by user_id for safety even though the caller
+// already validated the session.
+
+export async function updateEmailFlags(
+  userId: string,
+  ids: string[],
+  flags: Partial<Pick<Email, 'is_read' | 'is_starred' | 'is_trashed' | 'is_spam' | 'is_archived'>>,
+): Promise<number> {
+  if (ids.length === 0) return 0;
+  const { data, error } = await supabase
+    .from('emails')
+    .update(flags)
+    .eq('user_id', userId)
+    .in('id', ids)
+    .select('id');
+  if (error) throw new Error(`updateEmailFlags: ${error.message}`);
+  return data?.length ?? 0;
+}
+
+// Hard delete — used only for delete_forever after Gmail's permanent-delete
+// call has succeeded. The chat layer prompts for confirmation before this.
+export async function deleteEmailsByIds(userId: string, ids: string[]): Promise<number> {
+  if (ids.length === 0) return 0;
+  const { data, error } = await supabase
+    .from('emails')
+    .delete()
+    .eq('user_id', userId)
+    .in('id', ids)
+    .select('id');
+  if (error) throw new Error(`deleteEmailsByIds: ${error.message}`);
+  return data?.length ?? 0;
+}
+
+export async function getEmailsByIds(userId: string, ids: string[]): Promise<Email[]> {
+  if (ids.length === 0) return [];
+  const { data, error } = await supabase
+    .from('emails')
+    .select('*')
+    .eq('user_id', userId)
+    .in('id', ids);
+  if (error) throw new Error(`getEmailsByIds: ${error.message}`);
+  return (data || []) as Email[];
+}
+
+// Case-insensitive exact sender match — callers may pass either the bare
+// email (alerts@foo.com) or a display form; the Gmail filter needs the bare
+// form, so block_sender callers should normalise before calling.
+export async function getEmailsBySender(
+  userId: string,
+  senderEmail: string,
+  connectionId?: string,
+): Promise<Email[]> {
+  let q = supabase
+    .from('emails')
+    .select('*')
+    .eq('user_id', userId)
+    .ilike('sender', senderEmail);
+  if (connectionId) q = q.eq('connection_id', connectionId);
+  const { data, error } = await q;
+  if (error) throw new Error(`getEmailsBySender: ${error.message}`);
+  return (data || []) as Email[];
+}
+
+// ============================================================
+// BLOCKED SENDERS
+// ============================================================
+
+export async function listBlockedSenders(userId: string): Promise<BlockedSender[]> {
+  const { data, error } = await supabase
+    .from('blocked_senders')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(`listBlockedSenders: ${error.message}`);
+  return (data || []) as BlockedSender[];
+}
+
+export async function insertBlockedSender(row: {
+  user_id: string;
+  connection_id: string | null;
+  sender_email: string;
+  gmail_filter_id: string | null;
+}): Promise<BlockedSender> {
+  const { data, error } = await supabase
+    .from('blocked_senders')
+    .upsert(row, { onConflict: 'user_id,connection_id,sender_email' })
+    .select()
+    .single();
+  if (error) throw new Error(`insertBlockedSender: ${error.message}`);
+  return data as BlockedSender;
+}
+
+// Returns the deleted rows so the caller can revoke each Gmail filter.
+export async function deleteBlockedSendersByEmail(
+  userId: string,
+  senderEmail: string,
+  connectionId?: string,
+): Promise<BlockedSender[]> {
+  let q = supabase
+    .from('blocked_senders')
+    .delete()
+    .eq('user_id', userId)
+    .ilike('sender_email', senderEmail);
+  if (connectionId) q = q.eq('connection_id', connectionId);
+  const { data, error } = await q.select();
+  if (error) throw new Error(`deleteBlockedSendersByEmail: ${error.message}`);
+  return (data || []) as BlockedSender[];
 }
 
 // ============================================================

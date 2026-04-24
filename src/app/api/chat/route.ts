@@ -2,10 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
 import { parseUserIntent, generateChatResponse } from '@/lib/ai/openai';
-import { getEmails, sendReply, getSummary } from '@/lib/email/actions';
-import { getEmailsByFilters } from '@/lib/supabase/db';
+import { getEmails, sendReply, getSummary, executeEmailAction } from '@/lib/email/actions';
 import { insertChatMessage, createChatSession } from '@/lib/supabase/db';
-import type { FilterAction, ReplyAction, SummaryAction, SearchAction, ActionResult } from '@/types';
+import type { FilterAction, ReplyAction, SummaryAction, SearchAction, EmailActionPayload, ActionResult } from '@/types';
 
 export async function POST(request: NextRequest) {
   const supabase = createServerComponentClient({ cookies });
@@ -59,6 +58,22 @@ export async function POST(request: NextRequest) {
         result = await getEmails(user.id, { search: searchAction.query });
         break;
       }
+      case 'email_action': {
+        const ea = actionPayload as EmailActionPayload;
+        const r = await executeEmailAction(user.id, {
+          action: ea.email_action,
+          email_ids: ea.email_ids,
+          sender_email: ea.sender_email,
+          connection_id: ea.connection_id,
+          filters: ea.filters,
+        });
+        result = {
+          action_result: { ...r, action: ea.email_action },
+          message: r.message,
+          error: r.error,
+        };
+        break;
+      }
       default:
         result = { error: 'Unknown action type' };
     }
@@ -78,6 +93,7 @@ export async function POST(request: NextRequest) {
         emails: result.emails?.slice(0, 10), // Limit stored data
         summary: result.summary,
         replies_sent: result.replies_sent,
+        action_result: result.action_result,
         error: result.error,
       },
     });
@@ -91,6 +107,7 @@ export async function POST(request: NextRequest) {
         emails: result.emails || [],
         summary: result.summary,
         replies_sent: result.replies_sent,
+        action_result: result.action_result,
         error: result.error,
       },
     });

@@ -35,7 +35,7 @@ describe('parseGmailMessage', () => {
 
   it('falls back to raw address when no display name is present', () => {
     const msg = makeMessage();
-    msg.payload.headers[0] = { name: 'From', value: 'alice@example.com' };
+    msg.payload.headers![0] = { name: 'From', value: 'alice@example.com' };
     const result = parseGmailMessage(msg);
     // Without angle-bracket format the regex doesn't match, so the email
     // address is used as both sender and senderName (code fallback behaviour).
@@ -103,7 +103,7 @@ describe('parseGmailMessage', () => {
 
   it('uses "(No Subject)" when Subject header is missing', () => {
     const msg = makeMessage();
-    msg.payload.headers = msg.payload.headers.filter((h) => h.name !== 'Subject');
+    msg.payload.headers = msg.payload.headers!.filter((h) => h.name !== 'Subject');
     const result = parseGmailMessage(msg);
     expect(result!.subject).toBe('(No Subject)');
   });

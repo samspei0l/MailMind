@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MailMind — Redesign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body, #root { height: 100%; width: 100%; overflow: hidden; }
+  body { font-family: 'Inter', system-ui, sans-serif; background: #f0f2f5; }
+
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 10px; }
+
+  @keyframes slideIn { from { opacity:0; transform: translateX(22px); } to { opacity:1; transform: translateX(0); } }
+  @keyframes fadeUp { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform: translateY(0); } }
+  @keyframes modalIn { from { opacity:0; transform: scale(0.96) translateY(12px); } to { opacity:1; transform: scale(1) translateY(0); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  @keyframes shimmer { 0%{background-position:-400px 0} 100%{background-position:400px 0} }
+  @keyframes navPop { 0%{transform:scaleY(0);opacity:0} 60%{transform:scaleY(1.12)} 100%{transform:scaleY(1);opacity:1} }
+  @keyframes thinkDot { 0%,80%,100%{transform:translateY(0);opacity:0.3} 40%{transform:translateY(-5px);opacity:1} }
+  @keyframes thinkScan { 0%{width:0%;opacity:0.7} 60%{width:85%;opacity:1} 100%{width:100%;opacity:0.4} }
+
+  .slide-in { animation: slideIn 0.26s cubic-bezier(.22,.68,0,1.2) both; }
+  .fade-up { animation: fadeUp 0.2s cubic-bezier(.22,.68,0,1.1) both; }
+  .modal-in { animation: modalIn 0.22s cubic-bezier(.22,.68,0,1.15) both; }
+  .spin { animation: spin 0.85s linear infinite; }
+  .pulse { animation: pulse 1.4s ease infinite; }
+
+  .shimmer-row {
+    background: linear-gradient(90deg, #f0f2f5 25%, #e8eaed 50%, #f0f2f5 75%);
+    background-size: 400px 100%;
+    animation: shimmer 1.4s infinite;
+    border-radius: 6px;
+    height: 14px;
+  }
+
+  input, textarea, select, button { font-family: inherit; }
+  button { cursor: pointer; border: none; background: none; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel">
+
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ─── Brand tokens ─── */
+const T = {
+  teal:    '#004E6E',
+  tealD:   '#003A52',
+  tealL:   '#005F87',
+  lime:    '#8DC63F',
+  limeD:   '#72A030',
+  limeL:   '#A3D45A',
+  bg:      '#F0F2F5',
+  surface: '#FFFFFF',
+  border:  '#E3E6EA',
+  text:    '#1A2332',
+  muted:   '#64748B',
+  subtle:  '#94A3B8',
+  blue:    '#3B82F6',
+  red:     '#EF4444',
+  amber:   '#F59E0B',
+  green:   '#22C55E',
+  purple:  '#8B5CF6',
+};
+
+/* ─── Mock data ─── */
+const ACCOUNTS = [
+  { id:'a1', email:'james@company.com',     nickname:'Work',     color:'#004E6E', provider:'gmail'   },
+  { id:'a2', email:'james.p@gmail.com',     nickname:'Personal', color:'#8DC63F', provider:'gmail'   },
+  { id:'a3', email:'james@outlook.com',     nickname:'Outlook',  color:'#0078D4', provider:'outlook' },
+];
+
+const EMAILS = [
+  {id:'e1',connection_id:'a1',sender:'Sarah Mitchell',sender_email:'sarah@acmecorp.com',subject:'Q2 Proposal — Action Required',snippet:'Hi James, I\'ve reviewed the proposal and have a few key points to discuss before we finalize...',body:`Hi James,
+
+I've reviewed the Q2 proposal you sent last week and I think we're almost there. Before we finalize, I need to address a few key points:
+
+1. The budget allocation for digital marketing seems lower than what we discussed in our last call — can we revisit?
+2. The timeline for Phase 2 deliverables needs to be more specific.
+3. We'll need sign-off from legal before anything is sent to the client.
+
+Can we schedule a 30-minute call this week to go over these? I'm available Thursday afternoon or Friday morning.
+
+Best,
+Sarah`,
+    received_at:'2026-04-24T09:42:00Z',is_read:false,priority:'HIGH',category:'Client',type:'Quotation',requires_reply:true,
+    summary:'Sarah has reviewed the Q2 proposal and raised 3 action items around budget, timeline, and legal sign-off. Needs a meeting this week.',
+    suggested_reply:'Hi Sarah, thank you for the thorough review. I\'m available Thursday afternoon — let\'s say 3pm? I\'ll come prepared with the updated budget figures and a more detailed Phase 2 timeline. I\'ll also loop in our legal team beforehand.',
+  },
+  {id:'e2',connection_id:'a2',sender:'GitHub',sender_email:'noreply@github.com',subject:'[mailmind-v3] Pull request merged',snippet:'Your pull request #47 "feat: add multi-account sync" was merged into main by @teammate...',body:`Your pull request #47 "feat: add multi-account sync" was successfully merged into main.
+
+Merged by: @teammate
+Branch: feature/multi-account-sync → main
+Commits: 12
+Files changed: 34`,
+    received_at:'2026-04-24T08:15:00Z',is_read:true,priority:'LOW',category:'Internal',type:'Update',requires_reply:false,
+    summary:'PR #47 for multi-account sync was merged into main.',
+  },
+  {id:'e3',connection_id:'a1',sender:'David Chen',sender_email:'d.chen@partner.io',subject:'Invoice INV-2024-089 — Payment overdue',snippet:'Dear James, this is a reminder that invoice INV-2024-089 for £4,200 was due on April 15th...',body:`Dear James,
+
+This is a gentle reminder that invoice INV-2024-089 for £4,200 was due on April 15th and has not yet been received.
+
+If payment has already been made, please disregard this notice. If not, could you let us know when we can expect it?
+
+Thank you,
+David Chen
+Accounts Receivable`,
+    received_at:'2026-04-23T16:30:00Z',is_read:false,priority:'HIGH',category:'Finance',type:'Complaint',requires_reply:true,
+    summary:'Invoice INV-2024-089 for £4,200 is 9 days overdue. David is requesting payment confirmation.',
+    suggested_reply:'Hi David, apologies for the delay. I\'ve chased our accounts team and the payment will be processed by end of business today. You should receive a confirmation email within 24 hours.',
+  },
+  {id:'e4',connection_id:'a3',sender:'Emma Wilson',sender_email:'emma@startup.io',subject:'Partnership opportunity — let\'s connect',snippet:'Hi, I came across MailMind at TechCrunch and I think there\'s a really interesting synergy between...',body:`Hi James,
+
+I came across MailMind at TechCrunch and I think there's a really interesting synergy between our platforms. We're building an AI-powered CRM and could see a great integration opportunity.
+
+Would you be open to a brief 20-minute intro call next week?
+
+Emma Wilson
+Co-founder, Nexus CRM`,
+    received_at:'2026-04-23T11:00:00Z',is_read:true,priority:'MEDIUM',category:'Sales',type:'New Request',requires_reply:false,
+    summary:'Emma from Nexus CRM is proposing a partnership/integration. Wants a 20-min intro call next week.',
+  },
+  {id:'e5',connection_id:'a1',sender:'Alex Thompson',sender_email:'alex.t@internal.com',subject:'Team lunch — Friday 12:30pm',snippet:'Hey everyone, just a reminder about our team lunch this Friday at 12:30 at The Garden...',body:`Hey everyone,
+
+Just a reminder about our team lunch this Friday at 12:30pm at The Garden restaurant on Baker Street. 
+
+Please RSVP by Thursday EOD so we can confirm the booking. Currently have 8 confirmed.
+
+See you there!
+Alex`,
+    received_at:'2026-04-22T14:20:00Z',is_read:true,priority:'LOW',category:'Internal',type:'Update',requires_reply:false,
+    summary:'Team lunch this Friday at 12:30 at The Garden. RSVP by Thursday.',
+  },
+  {id:'e6',connection_id:'a2',sender:'Notion',sender_email:'notify@notion.so',subject:'Your weekly digest is ready',snippet:'This week you completed 12 tasks, created 4 new pages, and collaborated with 3 teammates...',body:`Your Notion weekly digest is ready.
+
+This week:
+✓ 12 tasks completed
+✓ 4 new pages created
+✓ 3 collaborators active
+✓ 2 databases updated
+
+Top pages visited: Q2 Roadmap, Team Wiki, Client Notes`,
+    received_at:'2026-04-22T08:00:00Z',is_read:true,priority:'LOW',category:'Other',type:'Update',requires_reply:false,
+    summary:'Notion weekly digest: 12 tasks completed, 4 pages created.',
+  },
+  {id:'e7',connection_id:'a1',sender:'Rachel Kim',sender_email:'rachel@bigclient.com',subject:'Complaint: Delayed delivery on order #8842',snippet:'I am writing to express my dissatisfaction with the service we\'ve received. Order #8842 was...',body:`Dear Sir/Madam,
+
+I am writing to formally express my dissatisfaction with the service we have received. Order #8842 was placed on April 10th with a promised delivery date of April 18th. As of today, April 24th, we have received nothing and have had no communication from your team.
+
+This is causing significant disruption to our operations. I expect an immediate response and resolution.
+
+Rachel Kim
+Operations Director, BigClient Ltd`,
+    received_at:'2026-04-21T17:45:00Z',is_read:false,priority:'HIGH',category:'Client',type:'Complaint',requires_reply:true,
+    summary:'Rachel is formally complaining about order #8842 being 6 days late with no communication. Urgent resolution needed.',
+    suggested_reply:'Dear Rachel, I sincerely apologize for the delay with order #8842 and the lack of communication. This is not the standard of service we aim to provide. I\'ve escalated this internally and our logistics team will contact you within 2 hours with a delivery update and resolution plan.',
+  },
+];
+
+const NAV = [
+  { id:'inbox',    label:'Inbox',    icon: InboxIcon    },
+  { id:'chat',     label:'AI Chat',  icon: ChatIcon     },
+  { id:'history',  label:'History',  icon: HistoryIcon  },
+  { id:'settings', label:'Settings', icon: SettingsIcon },
+];
+
+const PRIORITY_CONFIG = {
+  HIGH:   { label:'High',   bg:'#FEE2E2', text:'#DC2626', dot:'#EF4444' },
+  MEDIUM: { label:'Medium', bg:'#FEF3C7', text:'#D97706', dot:'#F59E0B' },
+  LOW:    { label:'Low',    bg:'#DCFCE7', text:'#16A34A', dot:'#22C55E' },
+};
+
+const CATEGORY_CONFIG = {
+  Sales:    { bg:'#F3E8FF', text:'#7C3AED' },
+  Client:   { bg:'#DBEAFE', text:'#1D4ED8' },
+  Internal: { bg:'#F1F5F9', text:'#475569' },
+  Finance:  { bg:'#DCFCE7', text:'#15803D' },
+  Marketing:{ bg:'#FCE7F3', text:'#BE185D' },
+  Other:    { bg:'#F1F5F9', text:'#64748B' },
+};
+
+/* ─── Utility ─── */
+function timeAgo(iso) {
+  const d = new Date(iso), now = new Date();
+  const diff = now - d;
+  if (diff < 3600000) return `${Math.floor(diff/60000)}m`;
+  if (diff < 86400000) return `${Math.floor(diff/3600000)}h`;
+  return d.toLocaleDateString('en-GB',{day:'numeric',month:'short'});
+}
+function avatar(name) {
+  return name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+}
+function avatarColor(name) {
+  const colors = ['#004E6E','#8DC63F','#3B82F6','#8B5CF6','#EC4899','#F59E0B','#10B981'];
+  let h = 0; for (let c of name) h = ((h<<5)-h)+c.charCodeAt(0);
+  return colors[Math.abs(h) % colors.length];
+}
+
+/* ─── Icons ─── */
+function InboxIcon({size=18,color='currentColor'}) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></svg>;
+}
+function ChatIcon({size=18,color='currentColor'}) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>;
+}
+function HistoryIcon({size=18,color='currentColor'}) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="12 8 12 12 14 14"/><path d="M3.05 11a9 9 0 108.83-7H9"/><polyline points="9 4 9 8 13 8" transform="scale(-1,1) translate(-22,0)"/><polyline points="3 4 3 8 7 8"/></svg>;
+}
+function SettingsIcon({size=18,color='currentColor'}) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>;
+}
+function ComposeIcon({size=18,color='currentColor'}) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>;
+}
+function SearchIcon({size=16,color='currentColor'}) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>;
+}
+function StarIcon({size=15,filled=false,color='currentColor'}) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill={filled?'#F59E0B':'none'} stroke={filled?'#F59E0B':color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>;
+}
+function ReplyIcon({size=15,color='currentColor'}) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 00-4-4H4"/></svg>;
+}
+function SparkleIcon({size=14,color='currentColor'}) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"/><path d="M19 15l.75 2.25L22 18l-2.25.75L19 21l-.75-2.25L16 18l2.25-.75z"/><path d="M5 3l.5 1.5L7 5l-1.5.5L5 7l-.5-1.5L3 5l1.5-.5z"/></svg>;
+}
+function CloseIcon({size=16,color='currentColor'}) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>;
+}
+function SyncIcon({size=15,color='currentColor'}) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>;
+}
+function ArchiveIcon({size=15,color='currentColor'}) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>;
+}
+function TrashIcon({size=15,color='currentColor'}) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>;
+}
+function SendIcon({size=15,color='currentColor'}) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>;
+}
+function CheckIcon({size=15,color='currentColor'}) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>;
+}
+function PlusIcon({size=16,color='currentColor'}) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>;
+}
+function LogoutIcon({size=16,color='currentColor'}) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
+}
+
+/* ─── Sidebar ─── */
+function Sidebar({ nav, onNav, onCompose, syncing, onSync }) {
+  const [collapsed, setCollapsed] = useState(false);
+
+  return (
+    <aside style={{
+      width: collapsed ? 64 : 240, flexShrink: 0,
+      background: T.teal, display:'flex', flexDirection:'column', height:'100%',
+      transition:'width 0.2s ease', overflow:'hidden',
+      borderRight: `1px solid ${T.tealD}`,
+    }}>
+      {/* Logo */}
+      <div style={{ padding:'16px 14px 14px', display:'flex', alignItems:'center', gap:11, borderBottom:`1px solid rgba(255,255,255,0.1)` }}>
+        <div style={{ width:40, height:40, borderRadius:11, background:'rgba(255,255,255,0.96)', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, boxShadow:'0 2px 10px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.8)' }}>
+          <img src="assets/mailmind-logo.png" alt="MailMind" style={{ width:27, height:27, objectFit:'contain' }} />
+        </div>
+        {!collapsed && (
+          <div style={{ minWidth:0 }}>
+            <div style={{ color:'#fff', fontWeight:700, fontSize:16.5, letterSpacing:'-0.3px', whiteSpace:'nowrap', lineHeight:1.25 }}>MailMind</div>
+            <div style={{ color:'rgba(255,255,255,0.42)', fontSize:9.5, letterSpacing:'0.02em', whiteSpace:'nowrap', marginTop:1.5, fontWeight:500 }}>by Verizon Group</div>
+          </div>
+        )}
+      </div>
+
+      {/* Compose */}
+      <div style={{ padding:'14px 10px 10px' }}>
+        <button onClick={onCompose} style={{
+          width:'100%', display:'flex', alignItems:'center', justifyContent: collapsed ? 'center' : 'flex-start',
+          gap:8, background:T.lime, color:'#fff', borderRadius:10, padding: collapsed ? '10px' : '10px 14px',
+          fontWeight:600, fontSize:13.5, transition:'all 0.15s', boxShadow:'0 2px 8px rgba(141,198,63,0.35)',
+        }}
+          onMouseEnter={e=>e.currentTarget.style.background=T.limeD}
+          onMouseLeave={e=>e.currentTarget.style.background=T.lime}>
+          <ComposeIcon size={16} color="#fff" />
+          {!collapsed && 'Compose'}
+        </button>
+      </div>
+
+      {/* Sync */}
+      <div style={{ padding:'0 10px 12px' }}>
+        <button onClick={onSync} style={{
+          width:'100%', display:'flex', alignItems:'center', justifyContent: collapsed ? 'center' : 'flex-start',
+          gap:8, background:'rgba(255,255,255,0.07)', color:'rgba(255,255,255,0.65)', borderRadius:8,
+          padding: collapsed ? '7px' : '7px 12px', fontSize:12.5, transition:'all 0.15s',
+        }}
+          onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,0.12)'}
+          onMouseLeave={e=>e.currentTarget.style.background='rgba(255,255,255,0.07)'}>
+          <span style={{ flexShrink:0 }} className={syncing ? 'spin' : ''}><SyncIcon size={14} color="rgba(255,255,255,0.65)" /></span>
+          {!collapsed && (syncing ? 'Syncing…' : 'Sync all inboxes')}
+        </button>
+      </div>
+
+      {/* Nav */}
+      <nav style={{ flex:1, padding:'0 8px', overflowY:'auto' }}>
+        {!collapsed && <p style={{ fontSize:10, fontWeight:600, color:'rgba(255,255,255,0.3)', letterSpacing:'0.08em', textTransform:'uppercase', padding:'4px 8px 8px' }}>Navigation</p>}
+        {NAV.map(({ id, label, icon: Icon }) => {
+          const active = nav === id;
+          return (
+            <button key={id} onClick={() => onNav(id)} style={{
+              width:'100%', display:'flex', alignItems:'center', gap:10, position:'relative', overflow:'hidden',
+              padding: collapsed ? '11px 0' : '10px 13px', justifyContent: collapsed ? 'center' : 'flex-start',
+              borderRadius:10, marginBottom:3,
+              transition:'background 0.18s ease, color 0.16s ease, box-shadow 0.18s ease',
+              background: active ? 'rgba(255,255,255,0.14)' : 'transparent',
+              color: active ? '#fff' : 'rgba(255,255,255,0.55)',
+              fontWeight: active ? 600 : 400, fontSize:13.5,
+              boxShadow: active ? 'inset 0 1px 0 rgba(255,255,255,0.1), 0 2px 8px rgba(0,0,0,0.15)' : 'none',
+            }}
+              onMouseEnter={e=>{ if(!active){ e.currentTarget.style.background='rgba(255,255,255,0.09)'; e.currentTarget.style.color='rgba(255,255,255,0.85)'; }}}
+              onMouseLeave={e=>{ if(!active){ e.currentTarget.style.background='transparent'; e.currentTarget.style.color='rgba(255,255,255,0.55)'; }}}>
+              {active && <span style={{ position:'absolute', left:0, top:'18%', bottom:'18%', width:3.5, borderRadius:'0 4px 4px 0', background:T.lime, animation:'navPop 0.28s cubic-bezier(.22,.68,0,1.3) both', transformOrigin:'top' }} />}
+              <Icon size={17} color={active ? '#fff' : 'rgba(255,255,255,0.55)'} />
+              {!collapsed && label}
+              {!collapsed && id === 'inbox' && (
+                <span style={{ marginLeft:'auto', background:T.lime, color:'#fff', fontSize:10, fontWeight:700, padding:'1px 7px', borderRadius:20, minWidth:20, textAlign:'center', boxShadow:'0 1px 4px rgba(0,0,0,0.18)' }}>3</span>
+              )}
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* Accounts */}
+      {!collapsed && (
+        <div style={{ padding:'8px 12px 10px', borderTop:`1px solid rgba(255,255,255,0.08)` }}>
+          <p style={{ fontSize:10, fontWeight:600, color:'rgba(255,255,255,0.3)', letterSpacing:'0.08em', textTransform:'uppercase', marginBottom:8 }}>Connected</p>
+          {ACCOUNTS.map(a => (
+            <div key={a.id} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 4px', borderRadius:7, marginBottom:2 }}>
+              <div style={{ width:8, height:8, borderRadius:'50%', background:a.color, flexShrink:0 }} />
+              <span style={{ fontSize:12, color:'rgba(255,255,255,0.6)', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{a.nickname} · {a.email.split('@')[1]}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* User footer */}
+      <div style={{ padding:'10px 12px', borderTop:`1px solid rgba(255,255,255,0.08)`, display:'flex', alignItems:'center', gap:10 }}>
+        <div style={{ width:30, height:30, borderRadius:'50%', background:T.lime, display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:700, color:'#fff', flexShrink:0 }}>JM</div>
+        {!collapsed && <>
+          <div style={{ flex:1, minWidth:0 }}>
+            <p style={{ fontSize:12.5, fontWeight:600, color:'#fff', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>James Miller</p>
+            <p style={{ fontSize:11, color:'rgba(255,255,255,0.4)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>james@company.com</p>
+          </div>
+          <button style={{ color:'rgba(255,255,255,0.3)', flexShrink:0, padding:4, borderRadius:6 }}
+            onMouseEnter={e=>e.currentTarget.style.color='rgba(255,255,255,0.7)'}
+            onMouseLeave={e=>e.currentTarget.style.color='rgba(255,255,255,0.3)'}>
+            <LogoutIcon size={15} />
+          </button>
+        </>}
+      </div>
+    </aside>
+  );
+}
+
+/* ─── Email List ─── */
+function EmailList({ emails, selectedId, onSelect, search, onSearch }) {
+  const [starred, setStarred] = useState(new Set(['e1','e3']));
+
+  return (
+    <div style={{ width:360, flexShrink:0, display:'flex', flexDirection:'column', background:T.surface, borderRight:`1px solid ${T.border}`, height:'100%' }}>
+      {/* Header */}
+      <div style={{ padding:'16px 16px 12px', borderBottom:`1px solid ${T.border}` }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
+          <h1 style={{ fontSize:19, fontWeight:700, color:T.text, letterSpacing:'-0.3px' }}>Inbox</h1>
+          <span style={{ fontSize:12, color:T.muted, background:T.bg, padding:'3px 9px', borderRadius:20, fontWeight:500 }}>{emails.length} messages</span>
+        </div>
+        {/* Search */}
+        <div style={{ position:'relative' }}>
+          <span style={{ position:'absolute', left:11, top:'50%', transform:'translateY(-50%)', pointerEvents:'none' }}>
+            <SearchIcon size={14} color={T.subtle} />
+          </span>
+          <input value={search} onChange={e=>onSearch(e.target.value)}
+            placeholder="Search messages…"
+            style={{ width:'100%', background:T.bg, border:`1px solid ${T.border}`, borderRadius:9, padding:'8px 12px 8px 33px', fontSize:13, color:T.text, outline:'none', transition:'border 0.15s' }}
+            onFocus={e=>e.target.style.borderColor=T.teal}
+            onBlur={e=>e.target.style.borderColor=T.border} />
+        </div>
+      </div>
+
+      {/* List */}
+      <div style={{ flex:1, overflowY:'auto' }}>
+        {emails.map((email, i) => {
+          const active = selectedId === email.id;
+          const pc = PRIORITY_CONFIG[email.priority] || {};
+          const cc = CATEGORY_CONFIG[email.category] || CATEGORY_CONFIG.Other;
+          const acct = ACCOUNTS.find(a=>a.id===email.connection_id);
+          const isStarred = starred.has(email.id);
+          return (
+            <div key={email.id}
+              onClick={() => onSelect(email)}
+              style={{
+                padding:'13px 14px 11px', borderBottom:`1px solid ${T.border}`,
+                background: active ? `rgba(0,78,110,0.06)` : (!email.is_read ? 'rgba(141,198,63,0.04)' : T.surface),
+                borderLeft: active ? `3px solid ${T.teal}` : '3px solid transparent',
+                cursor:'pointer', transition:'background 0.1s',
+                animation: `fadeUp 0.15s ${i*0.03}s both`,
+              }}
+              onMouseEnter={e=>{ if(!active) e.currentTarget.style.background='rgba(0,78,110,0.03)'; }}
+              onMouseLeave={e=>{ if(!active) e.currentTarget.style.background = !email.is_read ? 'rgba(141,198,63,0.04)' : T.surface; }}>
+
+              <div style={{ display:'flex', alignItems:'flex-start', gap:10 }}>
+                {/* Avatar */}
+                <div style={{ width:36, height:36, borderRadius:'50%', background:avatarColor(email.sender), display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:700, color:'#fff', flexShrink:0, marginTop:1 }}>
+                  {avatar(email.sender)}
+                </div>
+
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:2 }}>
+                    <span style={{ fontSize:13.5, fontWeight: email.is_read ? 500 : 700, color:T.text, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:'70%' }}>
+                      {email.sender}
+                    </span>
+                    <span style={{ fontSize:11.5, color:T.subtle, flexShrink:0 }}>{timeAgo(email.received_at)}</span>
+                  </div>
+
+                  <div style={{ display:'flex', alignItems:'center', gap:5, marginBottom:3 }}>
+                    {!email.is_read && <span style={{ width:7, height:7, borderRadius:'50%', background:T.teal, flexShrink:0 }} />}
+                    <p style={{ fontSize:13, fontWeight: email.is_read ? 400 : 600, color:T.text, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', flex:1 }}>{email.subject}</p>
+                  </div>
+
+                  <p style={{ fontSize:12, color:T.subtle, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', marginBottom:7 }}>{email.snippet}</p>
+
+                  {/* Tags */}
+                  <div style={{ display:'flex', gap:5, flexWrap:'wrap', alignItems:'center' }}>
+                    {email.priority && <span style={{ fontSize:10.5, fontWeight:600, padding:'2px 7px', borderRadius:20, background:pc.bg, color:pc.text }}>{pc.label}</span>}
+                    {email.category && <span style={{ fontSize:10.5, fontWeight:500, padding:'2px 7px', borderRadius:20, background:cc.bg, color:cc.text }}>{email.category}</span>}
+                    {acct && ACCOUNTS.length > 1 && <span style={{ fontSize:10.5, padding:'2px 7px', borderRadius:20, background:T.bg, color:T.muted, border:`1px solid ${T.border}` }}>{acct.nickname}</span>}
+                    {email.requires_reply && <span style={{ fontSize:10.5, fontWeight:600, padding:'2px 7px', borderRadius:20, background:'#FFF7ED', color:'#C2410C', marginLeft:'auto' }}>↩ Reply needed</span>}
+                    <button onClick={e=>{e.stopPropagation(); setStarred(s=>{ const ns=new Set(s); ns.has(email.id)?ns.delete(email.id):ns.add(email.id); return ns; }); }}
+                      style={{ marginLeft: email.requires_reply ? 0 : 'auto', padding:2, lineHeight:1 }}>
+                      <StarIcon size={13} filled={isStarred} color={T.subtle} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Email Detail ─── */
+function EmailDetail({ email, onClose }) {
+  const [replying, setReplying] = useState(false);
+  const [prompt, setPrompt] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [generatedDraft, setGeneratedDraft] = useState('');
+  const [showDraft, setShowDraft] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [fromId, setFromId] = useState(email.connection_id || ACCOUNTS[0].id);
+  const [tone, setTone] = useState('professional');
+  const acct = ACCOUNTS.find(a=>a.id===email.connection_id);
+
+  const TONES = ['professional','friendly','formal','concise'];
+
+  async function handleGenerate() {
+    if (!prompt.trim()) return;
+    setGenerating(true);
+    await new Promise(r=>setTimeout(r,1800));
+    setGeneratedDraft(email.suggested_reply || `Hi ${email.sender.split(' ')[0]},\n\nThank you for your email regarding "${email.subject}".\n\n${prompt}\n\nBest regards,\nJames Miller`);
+    setShowDraft(true);
+    setGenerating(false);
+  }
+
+  async function handleSend() {
+    setSending(true);
+    await new Promise(r=>setTimeout(r,1200));
+    setSent(true);
+    setSending(false);
+  }
+
+  return (
+    <div key={email.id} className="slide-in" style={{ flex:1, display:'flex', flexDirection:'column', background:T.surface, height:'100%', minWidth:0 }}>
+      {/* Header */}
+      <div style={{ padding:'14px 20px', borderBottom:`1px solid ${T.border}`, display:'flex', alignItems:'flex-start', gap:12, background:'rgba(255,255,255,0.9)', backdropFilter:'blur(10px)' }}>
+        <div style={{ flex:1, minWidth:0 }}>
+          <h2 style={{ fontSize:16, fontWeight:700, color:T.text, marginBottom:4, letterSpacing:'-0.2px' }}>{email.subject}</h2>
+          <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+            <div style={{ display:'flex', alignItems:'center', gap:7 }}>
+              <div style={{ width:24, height:24, borderRadius:'50%', background:avatarColor(email.sender), display:'flex', alignItems:'center', justifyContent:'center', fontSize:9, fontWeight:700, color:'#fff' }}>{avatar(email.sender)}</div>
+              <span style={{ fontSize:12.5, color:T.muted }}><b style={{color:T.text}}>{email.sender}</b> &lt;{email.sender_email}&gt;</span>
+            </div>
+            <span style={{ fontSize:12, color:T.subtle }}>· {new Date(email.received_at).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
+          </div>
+        </div>
+        <div style={{ display:'flex', gap:4, flexShrink:0 }}>
+          <ActionBtn icon={<ArchiveIcon />} label="Archive" />
+          <ActionBtn icon={<TrashIcon color={T.red} />} label="Trash" danger />
+          <button onClick={onClose} style={{ padding:'6px', borderRadius:8, color:T.subtle, background:'transparent', display:'flex', alignItems:'center', transition:'all 0.12s' }}
+            onMouseEnter={e=>{ e.currentTarget.style.background=T.bg; e.currentTarget.style.color=T.text; }}
+            onMouseLeave={e=>{ e.currentTarget.style.background='transparent'; e.currentTarget.style.color=T.subtle; }}>
+            <CloseIcon size={16} />
+          </button>
+        </div>
+      </div>
+
+      <div style={{ flex:1, overflowY:'auto', padding:'20px' }}>
+        {/* AI Summary card */}
+        {email.summary && (
+          <div className="fade-up" style={{ background:'linear-gradient(135deg, rgba(0,78,110,0.05) 0%, rgba(141,198,63,0.06) 100%)', border:`1px solid rgba(0,78,110,0.12)`, borderRadius:12, padding:'14px 16px', marginBottom:20 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:10 }}>
+              <SparkleIcon size={13} color={T.teal} />
+              <span style={{ fontSize:11, fontWeight:700, color:T.teal, letterSpacing:'0.06em', textTransform:'uppercase' }}>AI Analysis</span>
+            </div>
+            <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:10 }}>
+              {email.priority && (() => { const pc = PRIORITY_CONFIG[email.priority]; return <span style={{ fontSize:11, fontWeight:600, padding:'3px 9px', borderRadius:20, background:pc.bg, color:pc.text }}>{pc.label} Priority</span>; })()}
+              {email.category && (() => { const cc = CATEGORY_CONFIG[email.category]||CATEGORY_CONFIG.Other; return <span style={{ fontSize:11, fontWeight:500, padding:'3px 9px', borderRadius:20, background:cc.bg, color:cc.text }}>{email.category}</span>; })()}
+              {email.type && <span style={{ fontSize:11, padding:'3px 9px', borderRadius:20, background:'#F3E8FF', color:'#7C3AED', fontWeight:500 }}>{email.type}</span>}
+              {email.requires_reply && <span style={{ fontSize:11, padding:'3px 9px', borderRadius:20, background:'#FFF7ED', color:'#C2410C', fontWeight:600 }}>↩ Reply Required</span>}
+            </div>
+            <p style={{ fontSize:12.5, color:T.text, lineHeight:1.6 }}>{email.summary}</p>
+          </div>
+        )}
+
+        {/* Email body */}
+        <div style={{ fontSize:14, color:T.text, lineHeight:1.75, whiteSpace:'pre-wrap', marginBottom:28 }}>{email.body || email.snippet}</div>
+
+        {/* Suggested reply */}
+        {email.suggested_reply && !replying && !sent && (
+          <div style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:12, padding:'14px 16px', marginBottom:20 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
+              <span style={{ fontSize:11, fontWeight:700, color:T.muted, textTransform:'uppercase', letterSpacing:'0.06em' }}>Suggested Reply</span>
+              <button onClick={()=>navigator.clipboard?.writeText(email.suggested_reply)} style={{ fontSize:12, color:T.teal, fontWeight:500 }}>Copy</button>
+            </div>
+            <p style={{ fontSize:13, color:T.text, lineHeight:1.65, whiteSpace:'pre-wrap' }}>{email.suggested_reply}</p>
+          </div>
+        )}
+
+        {/* Reply sent */}
+        {sent && (
+          <div className="fade-up" style={{ display:'flex', alignItems:'center', gap:10, background:'#DCFCE7', border:'1px solid #BBF7D0', borderRadius:12, padding:'14px 18px', marginBottom:20 }}>
+            <CheckIcon size={18} color="#16A34A" />
+            <p style={{ fontSize:13.5, color:'#15803D', fontWeight:500 }}>Reply sent from <b>{ACCOUNTS.find(a=>a.id===fromId)?.email}</b></p>
+          </div>
+        )}
+
+        {/* Reply composer */}
+        {!sent && (
+          <div>
+            {!replying ? (
+              <button onClick={()=>setReplying(true)} style={{
+                display:'flex', alignItems:'center', gap:7, padding:'10px 18px', borderRadius:10,
+                border:`1.5px solid ${T.teal}`, color:T.teal, fontWeight:600, fontSize:13.5,
+                background:'rgba(0,78,110,0.04)', transition:'all 0.15s',
+              }}
+                onMouseEnter={e=>{ e.currentTarget.style.background=T.teal; e.currentTarget.style.color='#fff'; }}
+                onMouseLeave={e=>{ e.currentTarget.style.background='rgba(0,78,110,0.04)'; e.currentTarget.style.color=T.teal; }}>
+                <SparkleIcon size={14} color="currentColor" /> Reply with AI
+              </button>
+            ) : (
+              <div className="fade-up" style={{ border:`1.5px solid ${T.border}`, borderRadius:14, overflow:'hidden', background:T.surface, boxShadow:'0 4px 20px rgba(0,0,0,0.06)' }}>
+                {/* From + Tone row */}
+                <div style={{ padding:'10px 14px', borderBottom:`1px solid ${T.border}`, background:T.bg, display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:7 }}>
+                    <span style={{ fontSize:12, color:T.muted, fontWeight:500 }}>From:</span>
+                    <select value={fromId} onChange={e=>setFromId(e.target.value)} style={{ fontSize:12.5, border:`1px solid ${T.border}`, borderRadius:7, padding:'4px 8px', background:'#fff', color:T.text, outline:'none' }}>
+                      {ACCOUNTS.map(a=><option key={a.id} value={a.id}>{a.nickname} ({a.email})</option>)}
+                    </select>
+                  </div>
+                  <div style={{ display:'flex', alignItems:'center', gap:5, marginLeft:'auto' }}>
+                    {TONES.map(t=>(
+                      <button key={t} onClick={()=>setTone(t)} style={{
+                        fontSize:11.5, padding:'3px 10px', borderRadius:20,
+                        background: tone===t ? T.teal : T.bg,
+                        color: tone===t ? '#fff' : T.muted,
+                        border:`1px solid ${tone===t ? T.teal : T.border}`,
+                        fontWeight: tone===t ? 600 : 400, transition:'all 0.12s',
+                        textTransform:'capitalize',
+                      }}>{t}</button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Draft preview */}
+                {showDraft && (
+                  <div style={{ padding:'14px 16px', borderBottom:`1px solid ${T.border}`, background:'rgba(141,198,63,0.04)' }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8 }}>
+                      <SparkleIcon size={12} color={T.lime} />
+                      <span style={{ fontSize:11, fontWeight:700, color:T.limeD, textTransform:'uppercase', letterSpacing:'0.05em' }}>AI Draft · {tone}</span>
+                      <button onClick={()=>setShowDraft(false)} style={{ marginLeft:'auto', fontSize:12, color:T.muted }}>Edit prompt</button>
+                    </div>
+                    <textarea value={generatedDraft} onChange={e=>setGeneratedDraft(e.target.value)} rows={7}
+                      style={{ width:'100%', fontSize:13, color:T.text, lineHeight:1.7, resize:'none', border:'none', background:'transparent', outline:'none', fontFamily:'inherit' }} />
+                  </div>
+                )}
+
+                {/* Prompt input */}
+                {!showDraft && (
+                  <div style={{ padding:'12px 16px', borderBottom:`1px solid ${T.border}` }}>
+                    <p style={{ fontSize:11.5, fontWeight:600, color:T.muted, marginBottom:7, textTransform:'uppercase', letterSpacing:'0.04em' }}>Describe your reply or write it directly</p>
+                    <textarea value={prompt} onChange={e=>setPrompt(e.target.value)}
+                      placeholder={`e.g. "Tell Sarah we're available Thursday 3pm and will prepare the updated budget figures"`}
+                      rows={4}
+                      style={{ width:'100%', fontSize:13.5, color:T.text, lineHeight:1.65, resize:'none', border:'none', background:'transparent', outline:'none', fontFamily:'inherit', placeholder:T.subtle }} />
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div style={{ padding:'10px 14px', background:T.bg, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                  <button onClick={()=>{ setReplying(false); setShowDraft(false); setPrompt(''); setGeneratedDraft(''); }} style={{ fontSize:13, color:T.muted }}>Cancel</button>
+                  <div style={{ display:'flex', gap:8 }}>
+                    {!showDraft && (
+                      <button onClick={handleGenerate} disabled={!prompt.trim()||generating} style={{
+                        display:'flex', alignItems:'center', gap:6, padding:'8px 16px', borderRadius:9,
+                        border:`1px solid ${T.border}`, color: prompt.trim() ? T.teal : T.subtle,
+                        fontWeight:600, fontSize:13, background:'#fff', transition:'all 0.15s',
+                        opacity: prompt.trim() ? 1 : 0.5, cursor: prompt.trim() ? 'pointer' : 'not-allowed',
+                      }}>
+                        {generating ? <span className="spin"><SyncIcon size={13} /></span> : <SparkleIcon size={13} color={T.teal} />}
+                        {generating ? 'Generating…' : 'Generate'}
+                      </button>
+                    )}
+                    {showDraft && (
+                      <button onClick={handleGenerate} disabled={generating} style={{
+                        display:'flex', alignItems:'center', gap:6, padding:'8px 16px', borderRadius:9,
+                        border:`1px solid ${T.border}`, color:T.teal, fontWeight:600, fontSize:13, background:'#fff',
+                      }}>
+                        <span className={generating?'spin':''}><SyncIcon size={13} color={T.teal} /></span>
+                        Regenerate
+                      </button>
+                    )}
+                    <button onClick={handleSend} disabled={sending||(showDraft?!generatedDraft.trim():!prompt.trim())} style={{
+                      display:'flex', alignItems:'center', gap:7, padding:'8px 18px', borderRadius:9,
+                      background: T.teal, color:'#fff', fontWeight:600, fontSize:13,
+                      boxShadow:'0 2px 8px rgba(0,78,110,0.25)', transition:'all 0.15s',
+                      opacity: (sending||(showDraft?!generatedDraft.trim():!prompt.trim())) ? 0.6 : 1,
+                    }}
+                      onMouseEnter={e=>{ if(!sending) e.currentTarget.style.background=T.tealL; }}
+                      onMouseLeave={e=>{ e.currentTarget.style.background=T.teal; }}>
+                      {sending ? <span className="spin"><SyncIcon size={13} color="#fff" /></span> : <SendIcon size={13} color="#fff" />}
+                      {sending ? 'Sending…' : 'Send Reply'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ActionBtn({ icon, label, danger, onClick }) {
+  const [hov, setHov] = useState(false);
+  return (
+    <button onClick={onClick} title={label}
+      style={{ display:'flex', alignItems:'center', gap:5, padding:'6px 10px', borderRadius:8, fontSize:12, fontWeight:500, transition:'all 0.12s',
+        background: hov ? (danger ? '#FEE2E2' : T.bg) : 'transparent',
+        color: danger ? T.red : T.muted,
+      }}
+      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}>
+      {icon} {label}
+    </button>
+  );
+}
+
+/* ─── Empty State ─── */
+function EmptyDetail() {
+  return (
+    <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', background:T.bg, height:'100%' }}>
+      <div style={{ width:72, height:72, borderRadius:20, background:'rgba(0,78,110,0.08)', display:'flex', alignItems:'center', justifyContent:'center', marginBottom:16 }}>
+        <InboxIcon size={30} color={T.teal} />
+      </div>
+      <h3 style={{ fontSize:16, fontWeight:600, color:T.text, marginBottom:6 }}>Select an email</h3>
+      <p style={{ fontSize:13.5, color:T.muted, textAlign:'center', maxWidth:240, lineHeight:1.6 }}>Choose a message from your inbox to read and reply</p>
+    </div>
+  );
+}
+
+/* ─── Chat view ─── */
+function ChatView() {
+  const [messages, setMessages] = useState([
+    { role:'assistant', text:"Hi James! I'm your MailMind AI. Ask me anything about your inbox — I can summarise emails, find follow-ups, draft replies, or analyse trends." },
+  ]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const endRef = useRef(null);
+
+  const QUICK = ['Show urgent emails','Emails needing reply',"Today's summary",'Show complaints'];
+
+  async function send(text) {
+    const q = text || input.trim();
+    if (!q) return;
+    setMessages(m=>[...m,{role:'user',text:q}]);
+    setInput('');
+    setLoading(true);
+    await new Promise(r=>setTimeout(r,1600));
+    const responses = {
+      'show urgent emails':'You have 3 high-priority emails: Sarah\'s Q2 proposal (action required), David\'s overdue invoice for £4,200, and Rachel\'s complaint about delayed order #8842. Want me to help draft replies for any of these?',
+      'emails needing reply':'There are 3 emails requiring a reply: Sarah Mitchell\'s Q2 proposal, David Chen\'s overdue invoice, and Rachel Kim\'s complaint about order #8842. I can draft replies for all three if you\'d like.',
+      "today's summary":"Today you received 2 new emails: Sarah Mitchell needs a call about the Q2 proposal (budget, timeline, legal), and a GitHub PR merge notification for your multi-account sync feature. Your inbox has 3 unread messages total.",
+      'show complaints':'Found 1 complaint: Rachel Kim from BigClient Ltd is reporting a 6-day delay on order #8842 with no communication. This is marked High Priority. Shall I draft an urgent apology and resolution plan?',
+    };
+    const reply = responses[q.toLowerCase()] || `I searched your inbox for "${q}". I found several relevant emails across your 3 connected accounts. Would you like me to summarise them or help draft a response?`;
+    setMessages(m=>[...m,{role:'assistant',text:reply}]);
+    setLoading(false);
+  }
+
+  useEffect(() => { endRef.current?.scrollIntoView({behavior:'smooth'}); }, [messages]);
+
+  return (
+    <div style={{ flex:1, display:'flex', flexDirection:'column', background:T.bg, height:'100%' }}>
+      <div style={{ padding:'16px 20px', borderBottom:`1px solid ${T.border}`, background:T.surface }}>
+        <h1 style={{ fontSize:18, fontWeight:700, color:T.text }}>AI Chat</h1>
+        <p style={{ fontSize:12.5, color:T.muted, marginTop:2 }}>Ask anything about your emails</p>
+      </div>
+
+      <div style={{ flex:1, overflowY:'auto', padding:'20px', display:'flex', flexDirection:'column', gap:12 }}>
+        {messages.map((m,i)=>(
+          <div key={i} style={{ display:'flex', justifyContent: m.role==='user' ? 'flex-end' : 'flex-start' }}>
+            {m.role==='assistant' && (
+              <div style={{ width:32, height:32, borderRadius:9, background:'#fff', display:'flex', alignItems:'center', justifyContent:'center', marginRight:8, flexShrink:0, marginTop:2, boxShadow:'0 2px 8px rgba(0,0,0,0.15)', overflow:'hidden', padding:4 }}>
+                <img src="assets/mailmind-logo.png" alt="AI" style={{ width:'100%', height:'100%', objectFit:'contain' }} />
+              </div>
+            )}
+            <div style={{
+              maxWidth:'72%', padding:'11px 15px', borderRadius: m.role==='user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
+              background: m.role==='user' ? T.teal : T.surface,
+              color: m.role==='user' ? '#fff' : T.text,
+              fontSize:13.5, lineHeight:1.65, boxShadow: m.role==='assistant' ? '0 1px 4px rgba(0,0,0,0.06)' : 'none',
+              border: m.role==='assistant' ? `1px solid ${T.border}` : 'none',
+            }}>{m.text}</div>
+          </div>
+        ))}
+        {loading && (
+          <div style={{ display:'flex', alignItems:'flex-end', gap:9 }} className="fade-up">
+            <div style={{ width:32, height:32, borderRadius:9, background:'#fff', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, boxShadow:'0 2px 10px rgba(0,0,0,0.12)', overflow:'hidden', padding:4 }}>
+              <img src="assets/mailmind-logo.png" alt="AI" style={{ width:'100%', height:'100%', objectFit:'contain' }} />
+            </div>
+            <div style={{ padding:'13px 16px 11px', background:T.surface, borderRadius:'16px 16px 16px 4px', border:`1px solid ${T.border}`, boxShadow:'0 3px 14px rgba(0,0,0,0.07)', minWidth:170 }}>
+              <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8 }}>
+                <span style={{ fontSize:12, color:'#1A6B3C', fontWeight:600, letterSpacing:'0.01em' }}>Thinking</span>
+                <span style={{ display:'flex', gap:3 }}>
+                  {[0,1,2].map(i=><span key={i} style={{ width:5, height:5, borderRadius:'50%', background:'#1A6B3C', display:'inline-block', animation:`thinkDot 1.3s ${i*0.2}s ease-in-out infinite` }} />)}
+                </span>
+              </div>
+              <div style={{ height:3, borderRadius:3, background:'#e8f5e9', overflow:'hidden' }}>
+                <div style={{ height:'100%', borderRadius:3, background:'linear-gradient(90deg,#1A6B3C,#3fc64e)', animation:'thinkScan 1.8s ease-in-out infinite' }} />
+              </div>
+            </div>
+          </div>
+        )}
+        <div ref={endRef} />
+      </div>
+
+      {/* Quick prompts */}
+      <div style={{ padding:'0 20px 10px', display:'flex', gap:6, flexWrap:'wrap' }}>
+        {QUICK.map(q=>(
+          <button key={q} onClick={()=>send(q)} style={{ fontSize:12, padding:'6px 12px', borderRadius:20, border:`1px solid ${T.border}`, background:T.surface, color:T.muted, transition:'all 0.12s' }}
+            onMouseEnter={e=>{ e.currentTarget.style.borderColor=T.teal; e.currentTarget.style.color=T.teal; }}
+            onMouseLeave={e=>{ e.currentTarget.style.borderColor=T.border; e.currentTarget.style.color=T.muted; }}>
+            {q}
+          </button>
+        ))}
+      </div>
+
+      {/* Input */}
+      <div style={{ padding:'10px 16px 16px', borderTop:`1px solid ${T.border}`, background:T.surface }}>
+        <div style={{ display:'flex', gap:10, alignItems:'flex-end', background:T.bg, borderRadius:12, padding:'10px 12px', border:`1.5px solid ${T.border}` }}>
+          <textarea value={input} onChange={e=>setInput(e.target.value)}
+            onKeyDown={e=>{ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();} }}
+            placeholder="Ask about your emails…" rows={1}
+            style={{ flex:1, border:'none', background:'transparent', outline:'none', fontSize:13.5, color:T.text, resize:'none', lineHeight:1.5, fontFamily:'inherit', maxHeight:100, overflow:'auto' }} />
+          <button onClick={()=>send()} disabled={!input.trim()} style={{
+            width:34, height:34, borderRadius:9, background: input.trim() ? T.teal : T.border,
+            display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, transition:'all 0.15s',
+          }}>
+            <SendIcon size={14} color="#fff" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Settings view ─── */
+function SettingsView() {
+  return (
+    <div style={{ flex:1, overflowY:'auto', padding:'28px 32px', background:T.bg }}>
+      <h1 style={{ fontSize:20, fontWeight:700, color:T.text, marginBottom:4 }}>Settings</h1>
+      <p style={{ fontSize:13.5, color:T.muted, marginBottom:28 }}>Manage your connected email accounts</p>
+
+      <div style={{ background:T.surface, borderRadius:14, border:`1px solid ${T.border}`, overflow:'hidden', marginBottom:20 }}>
+        <div style={{ padding:'14px 20px', borderBottom:`1px solid ${T.border}`, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+          <h2 style={{ fontSize:15, fontWeight:700, color:T.text }}>Connected Accounts</h2>
+          <button style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 14px', borderRadius:9, background:T.teal, color:'#fff', fontSize:13, fontWeight:600 }}>
+            <PlusIcon size={14} color="#fff" /> Add Account
+          </button>
+        </div>
+        {ACCOUNTS.map((a,i)=>(
+          <div key={a.id} style={{ padding:'14px 20px', borderBottom: i<ACCOUNTS.length-1?`1px solid ${T.border}`:'none', display:'flex', alignItems:'center', gap:14 }}>
+            <div style={{ width:40, height:40, borderRadius:'50%', background:a.color, display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:700, color:'#fff' }}>
+              {a.provider==='gmail'?'G':a.provider==='outlook'?'⊞':'@'}
+            </div>
+            <div style={{ flex:1 }}>
+              <p style={{ fontSize:14, fontWeight:600, color:T.text }}>{a.nickname}</p>
+              <p style={{ fontSize:12.5, color:T.muted }}>{a.email} · {a.provider}</p>
+            </div>
+            <div style={{ display:'flex', gap:6 }}>
+              <span style={{ fontSize:11.5, padding:'3px 10px', borderRadius:20, background:'#DCFCE7', color:'#16A34A', fontWeight:600 }}>Connected</span>
+              <button style={{ fontSize:12.5, color:T.subtle, padding:'4px 10px', borderRadius:8, border:`1px solid ${T.border}` }}>Disconnect</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ background:T.surface, borderRadius:14, border:`1px solid ${T.border}`, overflow:'hidden' }}>
+        <div style={{ padding:'14px 20px', borderBottom:`1px solid ${T.border}` }}>
+          <h2 style={{ fontSize:15, fontWeight:700, color:T.text }}>AI Preferences</h2>
+        </div>
+        {[['Default reply tone','Professional'],['Email sync frequency','Every 15 minutes'],['AI model','Claude 3.5 Sonnet'],['Language','English (UK)']].map(([k,v],i,arr)=>(
+          <div key={k} style={{ padding:'14px 20px', borderBottom: i<arr.length-1?`1px solid ${T.border}`:'none', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+            <p style={{ fontSize:13.5, color:T.text, fontWeight:500 }}>{k}</p>
+            <span style={{ fontSize:13, color:T.muted, background:T.bg, padding:'5px 12px', borderRadius:8, border:`1px solid ${T.border}` }}>{v}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Compose Modal ─── */
+function ComposeModal({ onClose }) {
+  const [to, setTo] = useState('');
+  const [subject, setSubject] = useState('');
+  const [prompt, setPrompt] = useState('');
+  const [fromId, setFromId] = useState(ACCOUNTS[0].id);
+  const [tone, setTone] = useState('professional');
+  const [generating, setGenerating] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [sent, setSent] = useState(false);
+  const TONES = ['professional','friendly','formal','concise'];
+
+  async function generate() {
+    if (!prompt.trim()) return;
+    setGenerating(true);
+    await new Promise(r=>setTimeout(r,1600));
+    setDraft(`Dear ${to||'Recipient'},\n\n${prompt}\n\nBest regards,\nJames Miller`);
+    setGenerating(false);
+  }
+
+  async function handleSend() {
+    setGenerating(true);
+    await new Promise(r=>setTimeout(r,1000));
+    setSent(true);
+    setGenerating(false);
+    setTimeout(onClose, 1800);
+  }
+
+  return (
+    <div style={{ position:'fixed', inset:0, zIndex:200, display:'flex', alignItems:'center', justifyContent:'center', background:'rgba(0,0,0,0.35)', backdropFilter:'blur(4px)' }} onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
+      <div className="modal-in" style={{ width:'100%', maxWidth:600, background:T.surface, borderRadius:18, boxShadow:'0 20px 60px rgba(0,0,0,0.2)', overflow:'hidden', maxHeight:'90vh', display:'flex', flexDirection:'column' }}>
+        {/* Header */}
+        <div style={{ padding:'16px 20px', borderBottom:`1px solid ${T.border}`, display:'flex', alignItems:'center', gap:12 }}>
+          <div style={{ width:32, height:32, borderRadius:9, background:`rgba(0,78,110,0.1)`, display:'flex', alignItems:'center', justifyContent:'center' }}>
+            <ComposeIcon size={16} color={T.teal} />
+          </div>
+          <div style={{ flex:1 }}>
+            <h2 style={{ fontSize:15, fontWeight:700, color:T.text }}>Compose Email</h2>
+            <p style={{ fontSize:12, color:T.muted }}>Describe what you want to write</p>
+          </div>
+          <button onClick={onClose} style={{ color:T.subtle, padding:6, borderRadius:8 }}><CloseIcon size={16} /></button>
+        </div>
+
+        {sent ? (
+          <div style={{ padding:48, display:'flex', flexDirection:'column', alignItems:'center', gap:14 }}>
+            <div style={{ width:60, height:60, borderRadius:'50%', background:'#DCFCE7', display:'flex', alignItems:'center', justifyContent:'center' }}>
+              <CheckIcon size={26} color="#16A34A" />
+            </div>
+            <p style={{ fontSize:16, fontWeight:700, color:T.text }}>Email sent!</p>
+            <p style={{ fontSize:13, color:T.muted }}>Sent from {ACCOUNTS.find(a=>a.id===fromId)?.email}</p>
+          </div>
+        ) : (
+          <div style={{ flex:1, overflowY:'auto', padding:20 }}>
+            {/* From */}
+            <div style={{ marginBottom:14 }}>
+              <label style={{ fontSize:12, fontWeight:600, color:T.muted, display:'block', marginBottom:5 }}>From</label>
+              <select value={fromId} onChange={e=>setFromId(e.target.value)} style={{ width:'100%', padding:'9px 12px', borderRadius:9, border:`1px solid ${T.border}`, fontSize:13.5, color:T.text, outline:'none', background:T.surface }}>
+                {ACCOUNTS.map(a=><option key={a.id} value={a.id}>{a.nickname} ({a.email})</option>)}
+              </select>
+            </div>
+            {/* To */}
+            <div style={{ marginBottom:14 }}>
+              <label style={{ fontSize:12, fontWeight:600, color:T.muted, display:'block', marginBottom:5 }}>To</label>
+              <input value={to} onChange={e=>setTo(e.target.value)} placeholder="recipient@email.com" style={{ width:'100%', padding:'9px 12px', borderRadius:9, border:`1px solid ${T.border}`, fontSize:13.5, color:T.text, outline:'none' }}
+                onFocus={e=>e.target.style.borderColor=T.teal} onBlur={e=>e.target.style.borderColor=T.border} />
+            </div>
+            {/* Tone */}
+            <div style={{ marginBottom:14 }}>
+              <label style={{ fontSize:12, fontWeight:600, color:T.muted, display:'block', marginBottom:7 }}>Tone</label>
+              <div style={{ display:'flex', gap:6 }}>
+                {TONES.map(t=>(
+                  <button key={t} onClick={()=>setTone(t)} style={{ fontSize:12, padding:'5px 14px', borderRadius:20, border:`1px solid ${tone===t?T.teal:T.border}`, background:tone===t?T.teal:T.surface, color:tone===t?'#fff':T.muted, fontWeight:tone===t?600:400, textTransform:'capitalize', transition:'all 0.12s' }}>{t}</button>
+                ))}
+              </div>
+            </div>
+            {/* Prompt */}
+            <div style={{ marginBottom:14 }}>
+              <label style={{ fontSize:12, fontWeight:600, color:T.muted, display:'block', marginBottom:5 }}>What do you want to say?</label>
+              <textarea value={prompt} onChange={e=>setPrompt(e.target.value)}
+                placeholder={`e.g. "Email john@client.com asking for a meeting next week to discuss the Q4 proposal"`}
+                rows={4}
+                style={{ width:'100%', padding:'11px 13px', borderRadius:9, border:`1px solid ${T.border}`, fontSize:13.5, color:T.text, outline:'none', resize:'none', lineHeight:1.6, fontFamily:'inherit' }}
+                onFocus={e=>e.target.style.borderColor=T.teal} onBlur={e=>e.target.style.borderColor=T.border} />
+            </div>
+            {/* Draft */}
+            {draft && (
+              <div style={{ marginBottom:14, border:`1px solid rgba(141,198,63,0.3)`, borderRadius:12, overflow:'hidden', background:'rgba(141,198,63,0.03)' }}>
+                <div style={{ padding:'9px 14px', borderBottom:`1px solid rgba(141,198,63,0.2)`, display:'flex', alignItems:'center', gap:6 }}>
+                  <SparkleIcon size={12} color={T.lime} />
+                  <span style={{ fontSize:11, fontWeight:700, color:T.limeD, textTransform:'uppercase', letterSpacing:'0.05em' }}>AI Draft</span>
+                </div>
+                <textarea value={draft} onChange={e=>setDraft(e.target.value)} rows={8}
+                  style={{ width:'100%', padding:'12px 14px', fontSize:13.5, color:T.text, lineHeight:1.7, resize:'none', border:'none', background:'transparent', outline:'none', fontFamily:'inherit' }} />
+              </div>
+            )}
+          </div>
+        )}
+
+        {!sent && (
+          <div style={{ padding:'12px 20px', borderTop:`1px solid ${T.border}`, display:'flex', justifyContent:'space-between', gap:10 }}>
+            <button onClick={onClose} style={{ padding:'9px 18px', borderRadius:9, border:`1px solid ${T.border}`, fontSize:13.5, color:T.muted }}>Cancel</button>
+            <div style={{ display:'flex', gap:8 }}>
+              {!draft && (
+                <button onClick={generate} disabled={!prompt.trim()||generating} style={{
+                  display:'flex', alignItems:'center', gap:7, padding:'9px 18px', borderRadius:9,
+                  border:`1px solid ${T.teal}`, color:T.teal, fontWeight:600, fontSize:13.5, background:'rgba(0,78,110,0.04)',
+                  opacity: prompt.trim()&&!generating ? 1 : 0.5, transition:'all 0.15s',
+                }}>
+                  {generating ? <span className="spin"><SyncIcon size={14} color={T.teal} /></span> : <SparkleIcon size={14} color={T.teal} />}
+                  {generating ? 'Generating…' : 'Generate Draft'}
+                </button>
+              )}
+              <button onClick={handleSend} disabled={(!draft&&!prompt.trim())||generating} style={{
+                display:'flex', alignItems:'center', gap:7, padding:'9px 20px', borderRadius:9,
+                background:T.teal, color:'#fff', fontWeight:600, fontSize:13.5,
+                boxShadow:'0 2px 8px rgba(0,78,110,0.25)', transition:'all 0.15s',
+                opacity: (!draft&&!prompt.trim())||generating ? 0.5 : 1,
+              }}>
+                <SendIcon size={14} color="#fff" /> Send
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─── History view ─── */
+function HistoryView() {
+  const items = [
+    {id:1,to:'sarah@acmecorp.com',subject:'Re: Q2 Proposal — Action Required',sent:'2026-04-23T15:30:00Z',account:'Work'},
+    {id:2,to:'d.chen@partner.io',subject:'Re: Invoice INV-2024-089 — Payment overdue',sent:'2026-04-22T11:00:00Z',account:'Work'},
+    {id:3,to:'rachel@bigclient.com',subject:'Re: Complaint: Delayed delivery on order #8842',sent:'2026-04-21T18:20:00Z',account:'Work'},
+  ];
+  return (
+    <div style={{ flex:1, overflowY:'auto', padding:'28px 32px', background:T.bg }}>
+      <h1 style={{ fontSize:20, fontWeight:700, color:T.text, marginBottom:4 }}>Sent History</h1>
+      <p style={{ fontSize:13.5, color:T.muted, marginBottom:24 }}>Emails sent from MailMind</p>
+      <div style={{ background:T.surface, borderRadius:14, border:`1px solid ${T.border}`, overflow:'hidden' }}>
+        {items.map((item,i)=>(
+          <div key={item.id} style={{ padding:'15px 20px', borderBottom: i<items.length-1?`1px solid ${T.border}`:'none', display:'flex', alignItems:'center', gap:14 }}>
+            <div style={{ width:36, height:36, borderRadius:'50%', background:'rgba(0,78,110,0.1)', display:'flex', alignItems:'center', justifyContent:'center' }}>
+              <SendIcon size={15} color={T.teal} />
+            </div>
+            <div style={{ flex:1 }}>
+              <p style={{ fontSize:13.5, fontWeight:600, color:T.text, marginBottom:2 }}>{item.subject}</p>
+              <p style={{ fontSize:12, color:T.muted }}>To: {item.to} · from {item.account}</p>
+            </div>
+            <span style={{ fontSize:12, color:T.subtle }}>{timeAgo(item.sent)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ─── App ─── */
+function App() {
+  const TWEAK_DEFAULS = /*EDITMODE-BEGIN*/{
+    "accentColor": "#3fc64e",
+    "sidebarColor": "#1A6B3C",
+    "density": "spacious",
+    "showAISummary": true
+  }/*EDITMODE-END*/;
+
+  const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULS);
+
+  const [nav, setNav] = useState('inbox');
+  const [selectedEmail, setSelectedEmail] = useState(null);
+  const [search, setSearch] = useState('');
+  const [syncing, setSyncing] = useState(false);
+  const [composeOpen, setComposeOpen] = useState(false);
+
+  const filteredEmails = EMAILS.filter(e =>
+    !search || e.subject.toLowerCase().includes(search.toLowerCase()) || e.sender.toLowerCase().includes(search.toLowerCase())
+  );
+
+  async function handleSync() {
+    setSyncing(true);
+    await new Promise(r=>setTimeout(r,2000));
+    setSyncing(false);
+  }
+
+  return (
+    <div style={{ display:'flex', height:'100vh', width:'100vw', overflow:'hidden', background:T.bg, fontFamily:'Inter, system-ui, sans-serif',
+      '--teal': tweaks.sidebarColor, '--lime': tweaks.accentColor,
+    }}>
+      <Sidebar nav={nav} onNav={v=>{setNav(v); setSelectedEmail(null);}} onCompose={()=>setComposeOpen(true)} syncing={syncing} onSync={handleSync} />
+
+      <main style={{ flex:1, display:'flex', overflow:'hidden', minWidth:0 }}>
+        {nav === 'inbox' && (
+          <>
+            <EmailList emails={filteredEmails} selectedId={selectedEmail?.id} onSelect={setSelectedEmail} search={search} onSearch={setSearch} />
+            {selectedEmail ? <EmailDetail key={selectedEmail.id} email={selectedEmail} onClose={()=>setSelectedEmail(null)} /> : <EmptyDetail />}
+          </>
+        )}
+        {nav === 'chat'    && <ChatView />}
+        {nav === 'history' && <HistoryView />}
+        {nav === 'settings'&& <SettingsView />}
+      </main>
+
+      {composeOpen && <ComposeModal onClose={()=>setComposeOpen(false)} />}
+
+      <TweaksPanel>
+        <TweakColor label="Sidebar color"   value={tweaks.sidebarColor} onChange={v=>setTweak('sidebarColor',v)} />
+        <TweakColor label="Accent / Compose" value={tweaks.accentColor} onChange={v=>setTweak('accentColor',v)} />
+        <TweakRadio label="Density" value={tweaks.density} options={['compact','comfortable','spacious']} onChange={v=>setTweak('density',v)} />
+        <TweakToggle label="Show AI summary cards" value={tweaks.showAISummary} onChange={v=>setTweak('showAISummary',v)} />
+      </TweaksPanel>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

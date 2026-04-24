@@ -4,10 +4,13 @@ import { useState, useEffect, useRef } from 'react';
 import type { Email, EmailConnection, EmailTone } from '@/types';
 import { TONE_LABELS } from '@/types';
 import { format } from 'date-fns';
-import { X, Reply, Copy, Sparkles, Loader2, CheckCircle, PenLine, RefreshCw, Link2, PenTool } from 'lucide-react';
+import { X, Reply, Copy, Sparkles, Loader2, CheckCircle, PenLine, RefreshCw, Link2, PenTool, Archive, Trash2, ShieldAlert, Ban, BellOff, ExternalLink } from 'lucide-react';
+import type { EmailActionType } from '@/types';
 import AccountPicker from '@/components/ui/AccountPicker';
 import TonePicker from '@/components/ui/TonePicker';
 import VoiceRecorder from '@/components/ui/VoiceRecorder';
+import EmailBody from './EmailBody';
+import EmailAttachments from './EmailAttachments';
 
 interface Props {
   email: Email;
@@ -38,6 +41,8 @@ export default function EmailDetailPanel({ email, connections, onClose, autoOpen
   const [includeSignature, setIncludeSignature] = useState(true);
   const [detectingSig, setDetectingSig] = useState(false);
   const [sigFlash, setSigFlash] = useState('');
+  const [actionLoading, setActionLoading] = useState<EmailActionType | null>(null);
+  const [actionFlash, setActionFlash] = useState('');
   // Local cache so the toggle/"Detect signature" button reflect the latest
   // state without waiting for a page reload — mirrors the signature that
   // came back from /api/connections/signature.
@@ -153,6 +158,41 @@ export default function EmailDetailPanel({ email, connections, onClose, autoOpen
     }
   }
 
+  // Fire a mailbox action (trash/archive/spam/unsubscribe/block) against this email.
+  // On success: flash a message, close the panel, and notify InboxClient to refetch
+  // via the existing mailmind:sync-complete event so the email drops from the list.
+  async function runAction(action: EmailActionType, opts?: { confirm?: string }) {
+    if (opts?.confirm && !window.confirm(opts.confirm)) return;
+    setActionLoading(action);
+    setActionFlash('');
+    try {
+      const body: Record<string, unknown> = { action, email_ids: [email.id] };
+      if (action === 'block_sender') body.sender_email = email.sender;
+      const res = await fetch('/api/emails/actions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setActionFlash(data.error || data.message || 'Action failed');
+        return;
+      }
+      // Open any URL-only unsubscribe targets in a new tab.
+      if (Array.isArray(data.unsubscribe_urls)) {
+        data.unsubscribe_urls.forEach((u: string) => window.open(u, '_blank', 'noopener'));
+      }
+      window.dispatchEvent(new CustomEvent('mailmind:sync-complete'));
+      onClose();
+    } catch (err) {
+      setActionFlash((err as Error).message);
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  const hasUnsubscribe = !!(email.unsubscribe_url || email.unsubscribe_mailto);
+
   async function handleSend() {
     // Two paths:
     //   - showPreview=true  → user reviewed an AI draft, send that verbatim
@@ -193,29 +233,82 @@ export default function EmailDetailPanel({ email, connections, onClose, autoOpen
 
   const fromConn = connections.find((c) => c.id === fromId);
 
+  const senderDisplayName = email.sender_name || email.sender;
+  const senderInitials = senderDisplayName.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+  const senderColor = (() => {
+    const colors = ['#004E6E', '#8DC63F', '#3B82F6', '#8B5CF6', '#EC4899', '#F59E0B', '#10B981'];
+    let h = 0; for (const c of senderDisplayName) h = ((h << 5) - h) + c.charCodeAt(0);
+    return colors[Math.abs(h) % colors.length];
+  })();
+  const receivingAccount = connections.find((c) => c.id === email.connection_id);
+
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-background animate-fade-in">
-      {/* Header */}
-      <div className="px-5 py-3.5 border-b border-border flex items-center justify-between bg-background/80 backdrop-blur-sm">
-        <div className="flex-1 min-w-0">
-          <h2 className="font-semibold text-foreground text-sm truncate">{email.subject}</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            From <span className="text-foreground">{email.sender_name || email.sender}</span>
-            {' · '}{format(new Date(email.received_at), 'MMM d, h:mm a')}
-          </p>
+    <div key={email.id} className="flex-1 flex flex-col overflow-hidden bg-card mm-slide-in min-w-0">
+      {/* Subject row */}
+      <div className="px-6 pt-6 pb-3 border-b border-border">
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <h2 className="text-[22px] font-bold text-foreground tracking-tight leading-snug flex-1 min-w-0">
+            {email.subject || '(No subject)'}
+          </h2>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted transition-colors flex-shrink-0 mt-0.5"
+            aria-label="Close">
+            <X className="w-4 h-4 text-muted-foreground" />
+          </button>
         </div>
-        <button onClick={onClose} className="ml-3 p-1.5 rounded-lg hover:bg-muted transition-colors flex-shrink-0">
-          <X className="w-4 h-4 text-muted-foreground" />
-        </button>
+        {/* Sender block — Gmail-style avatar + name + timestamp */}
+        <div className="flex items-start gap-3">
+          <div
+            className="w-10 h-10 rounded-full flex items-center justify-center text-[13px] font-bold text-white flex-shrink-0"
+            style={{ background: senderColor }}
+            title={email.sender}
+          >
+            {senderInitials}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-baseline gap-2 flex-wrap">
+              <span className="font-semibold text-foreground text-[14px]">{senderDisplayName}</span>
+              <span className="text-[12.5px] text-muted-foreground">&lt;{email.sender}&gt;</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground mt-0.5">
+              <span>to {receivingAccount ? <span className="text-foreground/80">{receivingAccount.nickname || 'me'}</span> : 'me'}</span>
+              <span>·</span>
+              <span>{format(new Date(email.received_at), 'EEE, d MMM yyyy, HH:mm')}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Actions bar — per-email mailbox mutations. Each button fires against
+          /api/emails/actions and re-triggers the list refetch on success. */}
+      <div className="px-4 py-2 border-b border-border bg-muted/10 flex items-center gap-1 flex-wrap">
+        <ActionButton icon={Archive} label="Archive" loading={actionLoading === 'archive'}
+          onClick={() => runAction('archive')} />
+        <ActionButton icon={Trash2} label="Trash" loading={actionLoading === 'trash'}
+          onClick={() => runAction('trash')} />
+        <ActionButton icon={ShieldAlert} label="Mark spam" loading={actionLoading === 'spam'}
+          onClick={() => runAction('spam')} />
+        <ActionButton icon={Ban} label="Block sender" loading={actionLoading === 'block_sender'} danger
+          onClick={() => runAction('block_sender', { confirm: `Block ${email.sender}? Future emails from this address will be sent straight to spam.` })} />
+        {hasUnsubscribe && (
+          <ActionButton
+            icon={email.unsubscribe_mailto ? BellOff : ExternalLink}
+            label={email.unsubscribe_mailto ? 'Unsubscribe' : 'Unsubscribe (opens page)'}
+            loading={actionLoading === 'unsubscribe'}
+            onClick={() => runAction('unsubscribe')}
+          />
+        )}
+        {actionFlash && (
+          <span className="ml-auto text-xs text-red-500 truncate" title={actionFlash}>{actionFlash}</span>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {/* AI summary */}
+        {/* AI summary — teal → lime gradient */}
         {(email.summary || email.priority) && (
-          <div className="mx-4 mt-4 p-3.5 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30 border border-blue-100 dark:border-blue-900/30 rounded-xl">
+          <div className="ai-card mm-fade-up mx-4 mt-4 p-3.5 rounded-xl">
             <div className="flex items-center gap-1.5 mb-2">
-              <Sparkles className="w-3 h-3 text-blue-500" />
-              <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide">AI Analysis</span>
+              <Sparkles className="w-3 h-3 text-primary" />
+              <span className="text-xs font-bold text-primary uppercase tracking-[0.06em]">AI Analysis</span>
             </div>
             <div className="flex flex-wrap gap-1.5 mb-2">
               {email.priority && <span className={`text-xs px-2 py-0.5 rounded-full font-medium border ${PRIORITY_COLORS[email.priority]}`}>{email.priority} Priority</span>}
@@ -228,10 +321,15 @@ export default function EmailDetailPanel({ email, connections, onClose, autoOpen
           </div>
         )}
 
-        {/* Body */}
-        <div className="px-4 py-4">
-          <p className="text-sm text-foreground/80 leading-relaxed whitespace-pre-wrap">{email.body || email.snippet || '(No content)'}</p>
+        {/* Body — Gmail/Outlook-style sanitized HTML rendering */}
+        <div className="px-6 py-5">
+          <EmailBody html={email.body_html} text={email.body} snippet={email.snippet} />
         </div>
+
+        {/* Attachments — fetched on demand via /api/emails/:id/attachments/:id */}
+        {email.attachments && email.attachments.length > 0 && (
+          <EmailAttachments emailId={email.id} attachments={email.attachments} />
+        )}
 
         {/* Suggested reply */}
         {email.suggested_reply && !replying && (
@@ -259,8 +357,14 @@ export default function EmailDetailPanel({ email, connections, onClose, autoOpen
         {!replySent && (
           <div className="px-4 pb-5">
             {!replying ? (
-              <button onClick={() => setReplying(true)} className="flex items-center gap-2 text-sm font-medium text-primary hover:text-primary/80 transition-colors">
-                <Reply className="w-4 h-4" /> Reply with AI
+              <button
+                onClick={() => setReplying(true)}
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-[10px] text-[13.5px] font-semibold text-primary border-[1.5px] border-primary transition-all"
+                style={{ background: 'rgba(0,78,110,0.04)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'hsl(var(--brand-teal))'; e.currentTarget.style.color = '#fff'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(0,78,110,0.04)'; e.currentTarget.style.color = 'hsl(var(--brand-teal))'; }}
+              >
+                <Sparkles className="w-3.5 h-3.5" /> Reply with AI
               </button>
             ) : (
               <div className="border border-border rounded-xl overflow-hidden">
@@ -379,5 +483,37 @@ export default function EmailDetailPanel({ email, connections, onClose, autoOpen
         )}
       </div>
     </div>
+  );
+}
+
+type LucideIcon = typeof Archive;
+
+function ActionButton({
+  icon: Icon,
+  label,
+  onClick,
+  loading,
+  danger,
+}: {
+  icon: LucideIcon;
+  label: string;
+  onClick: () => void;
+  loading?: boolean;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={loading}
+      title={label}
+      className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-colors disabled:opacity-50 ${
+        danger
+          ? 'text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20'
+          : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+      }`}
+    >
+      {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Icon className="w-3.5 h-3.5" />}
+      <span>{label}</span>
+    </button>
   );
 }

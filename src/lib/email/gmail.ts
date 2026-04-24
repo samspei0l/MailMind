@@ -1,5 +1,5 @@
 import { google } from 'googleapis';
-import type { ParsedEmail, GmailMessage } from '@/types';
+import type { ParsedEmail, GmailMessage, GmailPart, EmailAttachment } from '@/types';
 
 // ============================================================
 // OAUTH CLIENT
@@ -108,21 +108,49 @@ export function parseGmailMessage(message: GmailMessage): ParsedEmail | null {
     const senderName = senderMatch[1]?.replace(/"/g, '').trim() || '';
     const senderEmail = senderMatch[2]?.trim() || from;
 
-    // Extract body
+    // Walk the whole MIME tree once: pick the best text/plain + text/html
+    // bodies, and collect every part that has a filename — those are the
+    // user-facing attachments (logos in signatures come through here too,
+    // tagged as inline via Content-Disposition).
     let body = '';
     let bodyHtml = '';
+    const attachments: EmailAttachment[] = [];
 
-    if (message.payload?.body?.data) {
-      body = decodeBase64(message.payload.body.data);
-    } else if (message.payload?.parts) {
-      for (const part of message.payload.parts) {
-        if (part.mimeType === 'text/plain' && part.body?.data) {
-          body = decodeBase64(part.body.data);
-        } else if (part.mimeType === 'text/html' && part.body?.data) {
-          bodyHtml = decodeBase64(part.body.data);
-        }
+    const walk = (part: GmailPart) => {
+      if (!part) return;
+      const isText = part.mimeType === 'text/plain';
+      const isHtml = part.mimeType === 'text/html';
+
+      // A part is an attachment if Gmail assigned an attachmentId AND it
+      // either has a filename or a Content-Disposition: attachment header.
+      const hasAttId = !!part.body?.attachmentId;
+      const filename = (part.filename || '').trim();
+      const disposition = (part.headers || []).find((h) => h.name.toLowerCase() === 'content-disposition')?.value || '';
+      const isInline = /^inline/i.test(disposition);
+
+      if (hasAttId && (filename || /attachment/i.test(disposition))) {
+        attachments.push({
+          filename: filename || `attachment-${attachments.length + 1}`,
+          mimeType: part.mimeType || 'application/octet-stream',
+          size: part.body?.size || 0,
+          attachmentId: part.body!.attachmentId!,
+          partId: part.partId || '',
+          inline: isInline || undefined,
+        });
+        return; // don't drill into attachment sub-parts
       }
-    }
+
+      // Prefer the outermost text parts; but if we haven't found one yet,
+      // accept a nested one too.
+      if (isText && !body && part.body?.data) body = decodeBase64(part.body.data);
+      if (isHtml && !bodyHtml && part.body?.data) bodyHtml = decodeBase64(part.body.data);
+
+      if (part.parts) {
+        for (const child of part.parts) walk(child);
+      }
+    };
+
+    if (message.payload) walk(message.payload);
 
     if (!body && bodyHtml) {
       body = stripHtml(bodyHtml);
@@ -131,6 +159,8 @@ export function parseGmailMessage(message: GmailMessage): ParsedEmail | null {
     const labels = message.labelIds || [];
     const isRead = !labels.includes('UNREAD');
     const isStarred = labels.includes('STARRED');
+
+    const { url: unsubscribeUrl, mailto: unsubscribeMailto } = parseListUnsubscribe(getHeader('List-Unsubscribe'));
 
     return {
       messageId: message.id,
@@ -146,11 +176,42 @@ export function parseGmailMessage(message: GmailMessage): ParsedEmail | null {
       labels,
       isRead,
       isStarred,
+      unsubscribeUrl,
+      unsubscribeMailto,
+      attachments,
     };
   } catch (err) {
     console.error('parseGmailMessage error:', err);
     return null;
   }
+}
+
+// ============================================================
+// FETCH ATTACHMENT BYTES
+// ============================================================
+//
+// Gmail separates attachment bytes from the message payload — the
+// payload carries an `attachmentId` reference and you have to hit the
+// messages.attachments.get endpoint to retrieve the base64 data. We do
+// this on demand from the download API route rather than on sync, so
+// we don't pay the bandwidth/storage cost for attachments the user
+// never opens.
+
+export async function fetchGmailAttachment(
+  accessToken: string,
+  refreshToken: string,
+  messageId: string,
+  attachmentId: string,
+): Promise<Buffer> {
+  const gmail = createGmailClient(accessToken, refreshToken);
+  const res = await gmail.users.messages.attachments.get({
+    userId: 'me',
+    messageId,
+    id: attachmentId,
+  });
+  const data = res.data?.data;
+  if (!data) throw new Error('Attachment has no body data');
+  return Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
 }
 
 // ============================================================
@@ -393,6 +454,68 @@ export async function deleteGmailFilter(accessToken: string, refreshToken: strin
     const code = (err as { code?: number })?.code;
     if (code !== 404) throw err;
   }
+}
+
+// ============================================================
+// UNSUBSCRIBE HELPERS
+// ============================================================
+//
+// The List-Unsubscribe header (RFC 2369) is a comma-separated list of
+// `<target>` tokens. Each target is either a mailto: or an https URL.
+// We extract the first of each kind so the UI can pick: mailto fires
+// in-app via Gmail send; URLs are opened in a new tab (we can't do a
+// silent POST because that requires server-side CORS + the sender has
+// to trust our IP as the unsubscribe origin).
+
+export function parseListUnsubscribe(header: string): { url: string | null; mailto: string | null } {
+  if (!header) return { url: null, mailto: null };
+  const tokens = header.match(/<([^>]+)>/g) || [];
+  let url: string | null = null;
+  let mailto: string | null = null;
+  for (const raw of tokens) {
+    const value = raw.slice(1, -1).trim();
+    if (!value) continue;
+    if (value.toLowerCase().startsWith('mailto:') && !mailto) {
+      mailto = value;
+    } else if (/^https?:\/\//i.test(value) && !url) {
+      url = value;
+    }
+  }
+  return { url, mailto };
+}
+
+// Send a one-line unsubscribe email to the mailto target extracted from the
+// List-Unsubscribe header. The target often encodes a token in the
+// local-part or subject query — we honour that by preserving the query
+// string and using "unsubscribe" as the body and subject when none is given.
+export async function sendGmailUnsubscribeEmail(
+  accessToken: string,
+  refreshToken: string,
+  mailtoTarget: string,
+): Promise<{ messageId: string }> {
+  const gmail = createGmailClient(accessToken, refreshToken);
+
+  // Strip mailto: prefix, split address from query params.
+  const without = mailtoTarget.replace(/^mailto:/i, '');
+  const [addr, queryString = ''] = without.split('?');
+  const query = new URLSearchParams(queryString);
+  const subject = query.get('subject') || 'unsubscribe';
+  const body = query.get('body') || 'unsubscribe';
+
+  const headers = [
+    `To: ${addr}`,
+    `Subject: ${subject}`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=utf-8',
+  ];
+  const raw = [...headers, '', body].join('\r\n');
+  const encoded = Buffer.from(raw).toString('base64url');
+
+  const result = await gmail.users.messages.send({
+    userId: 'me',
+    requestBody: { raw: encoded },
+  });
+  return { messageId: result.data.id! };
 }
 
 // ============================================================
