@@ -10,6 +10,33 @@ import {
 import { format } from 'date-fns';
 import EmailCardMini from './EmailCardMini';
 
+// Minimal Web Speech API typings (the DOM lib still doesn't ship them).
+// We only model what we actually use.
+interface SpeechRecognitionAlt { transcript: string }
+interface SpeechRecognitionRes { 0: SpeechRecognitionAlt; isFinal: boolean; length: number }
+interface SpeechRecognitionEventLike {
+  resultIndex: number;
+  results: ArrayLike<SpeechRecognitionRes>;
+}
+interface SpeechRecognitionErrorEventLike { error: string }
+interface SpeechRecognitionLike {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  onresult: ((ev: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((ev: SpeechRecognitionErrorEventLike) => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+  abort(): void;
+}
+declare global {
+  interface Window {
+    SpeechRecognition?: { new (): SpeechRecognitionLike };
+    webkitSpeechRecognition?: { new (): SpeechRecognitionLike };
+  }
+}
+
 /** MailMind logo in a white rounded square — the AI avatar across chat. */
 function AssistantAvatar({ size = 32 }: { size?: number }) {
   return (
@@ -30,147 +57,6 @@ function UserAvatar() {
     >
       You
     </div>
-  );
-}
-
-/**
- * Compact mic button for the chat composer. Records audio via MediaRecorder,
- * POSTs it to /api/voice/transcribe (NVIDIA whisper-large-v3), and hands the
- * transcript back so the user can review and edit before pressing Send.
- *
- * Kept inline rather than reusing VoiceRecorder because that component is
- * shaped around the "voice → composed email" pipeline (requires a connection
- * id, auto-sends through the LLM compose step) — chat just needs raw text.
- */
-function ChatVoiceButton({
-  onTranscript,
-  disabled,
-}: {
-  onTranscript: (text: string) => void;
-  disabled?: boolean;
-}) {
-  const [state, setState] = useState<'idle' | 'recording' | 'processing'>('idle');
-  const [error, setError] = useState<string | null>(null);
-  const [duration, setDuration] = useState(0);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-
-  const cleanup = useCallback(() => {
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
-  }, []);
-
-  useEffect(() => cleanup, [cleanup]);
-
-  const stop = useCallback(() => {
-    if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
-  }, []);
-
-  const start = useCallback(async () => {
-    setError(null);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      chunksRef.current = [];
-
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/webm')
-        ? 'audio/webm'
-        : 'audio/mp4';
-
-      const recorder = new MediaRecorder(stream, { mimeType });
-      recorderRef.current = recorder;
-
-      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
-
-      recorder.onstop = async () => {
-        cleanup();
-        if (chunksRef.current.length === 0) { setState('idle'); return; }
-        setState('processing');
-
-        const blob = new Blob(chunksRef.current, { type: mimeType });
-        const form = new FormData();
-        form.append('audio', blob, 'voice.webm');
-        try {
-          const res = await fetch('/api/voice/transcribe', { method: 'POST', body: form });
-          const data = await res.json();
-          if (data.error) {
-            setError(data.error);
-          } else if (typeof data.transcript === 'string' && data.transcript.trim()) {
-            onTranscript(data.transcript.trim());
-          }
-        } catch {
-          setError('Transcription failed. Please try again.');
-        } finally {
-          setState('idle');
-        }
-      };
-
-      recorder.start(250);
-      setState('recording');
-      setDuration(0);
-      timerRef.current = setInterval(() => setDuration((d) => d + 1), 1000);
-
-      // Safety cap — NVIDIA rejects files >25 MB and at opus bitrate that's
-      // well past two minutes. Auto-stop so a forgotten recording doesn't run.
-      setTimeout(() => { if (recorderRef.current?.state === 'recording') stop(); }, 120_000);
-    } catch (err) {
-      cleanup();
-      const msg = (err as Error).message || '';
-      setError(/permission/i.test(msg) ? 'Microphone permission denied.' : 'Microphone unavailable.');
-      setState('idle');
-    }
-  }, [cleanup, onTranscript, stop]);
-
-  const formatDuration = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-
-  if (state === 'processing') {
-    return (
-      <div
-        className="h-9 w-9 rounded-xl flex items-center justify-center flex-shrink-0 self-end"
-        style={{ background: 'hsl(var(--muted))' }}
-        title="Transcribing…"
-      >
-        <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (state === 'recording') {
-    return (
-      <button
-        type="button"
-        onClick={stop}
-        aria-label="Stop recording"
-        title="Stop recording"
-        className="h-9 px-2.5 rounded-xl flex items-center gap-1.5 flex-shrink-0 self-end transition-transform active:scale-95"
-        style={{ background: '#EF4444', color: '#fff', boxShadow: '0 4px 14px rgba(239,68,68,0.35)' }}
-      >
-        <Square className="w-3 h-3 fill-white" />
-        <span className="text-[11px] font-mono tabular-nums">{formatDuration(duration)}</span>
-      </button>
-    );
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={start}
-      disabled={disabled}
-      aria-label="Record voice message"
-      title={error || 'Record voice message'}
-      className="h-9 w-9 rounded-xl flex items-center justify-center flex-shrink-0 self-end transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-      style={{
-        background: error ? 'rgba(239,68,68,0.1)' : 'rgba(0,78,110,0.08)',
-        color: error ? '#EF4444' : 'hsl(var(--primary))',
-      }}
-    >
-      <Mic className="w-4 h-4" />
-    </button>
   );
 }
 
@@ -264,6 +150,14 @@ export default function ChatInterface({ initialQuery, initialSessionId }: Props)
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const lastAutoSentRef = useRef<string | null>(null);
+
+  const [recording, setRecording] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  // Browser Web Speech API — zero latency, no upload, no API key. We tried
+  // routing through NVIDIA Whisper but their hosted endpoint isn't reliable
+  // for this use case, and the in-browser recogniser is a better UX anyway.
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const inputAtStartRef = useRef<string>('');
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -374,6 +268,76 @@ export default function ChatInterface({ initialQuery, initialSessionId }: Props)
       sendMessage();
     }
   }
+
+  function startRecording() {
+    setVoiceError(null);
+    if (typeof window === 'undefined') return;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      setVoiceError('Voice input needs a Chromium-based browser (Chrome, Edge, Brave, Arc).');
+      return;
+    }
+    try {
+      const recognition = new SR();
+      recognition.lang = 'en-US';
+      recognition.interimResults = true;
+      recognition.continuous = true;
+      inputAtStartRef.current = input;
+
+      recognition.onresult = (ev: SpeechRecognitionEventLike) => {
+        let finalText = '';
+        let interim = '';
+        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+          const r = ev.results[i];
+          if (r.isFinal) finalText += r[0].transcript;
+          else interim += r[0].transcript;
+        }
+        const base = inputAtStartRef.current;
+        const merged = `${base}${base && (finalText || interim) ? ' ' : ''}${finalText}${interim}`.trim();
+        setInput(merged);
+        if (finalText) {
+          // Promote finalised text into the baseline so the next chunk appends
+          // rather than replacing the still-stable portion.
+          inputAtStartRef.current = `${base}${base && finalText ? ' ' : ''}${finalText}`;
+        }
+        requestAnimationFrame(() => {
+          const t = inputRef.current;
+          if (!t) return;
+          t.style.height = 'auto';
+          t.style.height = Math.min(t.scrollHeight, 140) + 'px';
+        });
+      };
+      recognition.onerror = (ev: SpeechRecognitionErrorEventLike) => {
+        if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+          setVoiceError('Microphone permission denied. Allow access and try again.');
+        } else if (ev.error === 'no-speech') {
+          setVoiceError("Didn't catch anything — try again.");
+        } else if (ev.error !== 'aborted') {
+          setVoiceError(`Voice input error: ${ev.error}`);
+        }
+        setRecording(false);
+      };
+      recognition.onend = () => {
+        setRecording(false);
+        recognitionRef.current = null;
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+      setRecording(true);
+      requestAnimationFrame(() => inputRef.current?.focus());
+    } catch (err) {
+      setVoiceError((err as Error).message);
+    }
+  }
+
+  function stopRecording() {
+    recognitionRef.current?.stop();
+    setRecording(false);
+  }
+
+  // Abort the recogniser if the component unmounts mid-recording.
+  useEffect(() => () => { recognitionRef.current?.abort(); }, []);
 
   const isEmpty = messages.length === 0 && !historyLoading;
 
@@ -612,11 +576,11 @@ export default function ChatInterface({ initialQuery, initialSessionId }: Props)
           }}
         >
           <div
-            className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 self-center"
-            style={{ background: 'rgba(0,78,110,0.08)' }}
-            title="AI assistant"
+            className="w-8 h-8 rounded-lg bg-white flex-shrink-0 self-center flex items-center justify-center overflow-hidden"
+            style={{ padding: 4, boxShadow: '0 2px 8px rgba(0,78,110,0.18)' }}
+            title="MailMind"
           >
-            <Sparkles className="w-3.5 h-3.5 text-primary" />
+            <Image src="/mailmind-logo.png" alt="MailMind" width={22} height={22} className="object-contain w-full h-full" priority />
           </div>
           <textarea
             ref={inputRef}
@@ -625,7 +589,7 @@ export default function ChatInterface({ initialQuery, initialSessionId }: Props)
             onKeyDown={handleKeyDown}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
-            placeholder="Ask about your emails… e.g. 'Draft a reply to Sarah about the Q2 proposal'"
+            placeholder={recording ? 'Listening… click the mic to stop' : "Ask about your emails… e.g. 'Draft a reply to Sarah about the Q2 proposal'"}
             rows={1}
             disabled={loading}
             className="flex-1 bg-transparent outline-none text-[13.5px] text-foreground resize-none py-2 placeholder:text-muted-foreground/70"
@@ -636,46 +600,54 @@ export default function ChatInterface({ initialQuery, initialSessionId }: Props)
               t.style.height = Math.min(t.scrollHeight, 140) + 'px';
             }}
           />
-          <ChatVoiceButton
+          <button
+            onClick={recording ? stopRecording : startRecording}
             disabled={loading}
-            onTranscript={(text) => {
-              // Append to whatever the user has already typed (with a space
-              // separator) so partial drafts aren't clobbered. Then focus
-              // the textarea so they can edit before sending.
-              setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
-              requestAnimationFrame(() => {
-                const el = inputRef.current;
-                if (el) {
-                  el.focus();
-                  el.style.height = 'auto';
-                  el.style.height = Math.min(el.scrollHeight, 140) + 'px';
-                  el.setSelectionRange(el.value.length, el.value.length);
-                }
-              });
+            aria-label={recording ? 'Stop recording' : 'Record voice prompt'}
+            title={recording ? 'Stop recording' : 'Record voice prompt'}
+            className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 self-end transition-all disabled:opacity-40 disabled:cursor-not-allowed relative"
+            style={{
+              background: recording ? '#DC2626' : 'rgba(141,198,63,0.15)',
+              color: recording ? '#fff' : 'hsl(var(--brand-limeD))',
+              border: recording ? 'none' : '1px solid rgba(141,198,63,0.4)',
+              boxShadow: recording ? '0 4px 14px rgba(220,38,38,0.35)' : 'none',
             }}
-          />
+          >
+            {recording
+              ? <Square className="w-3.5 h-3.5" fill="currentColor" />
+              : <Mic className="w-4 h-4" />}
+            {recording && (
+              <span
+                className="absolute inset-0 rounded-xl pointer-events-none"
+                style={{ animation: 'mm-pulse-ring 1.4s ease-out infinite', boxShadow: '0 0 0 0 rgba(220,38,38,0.5)' }}
+              />
+            )}
+          </button>
           <button
             onClick={() => sendMessage()}
-            disabled={loading || !input.trim()}
+            disabled={loading || recording || !input.trim()}
             aria-label="Send message"
             className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 self-end transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             style={{
-              background: input.trim() && !loading ? 'hsl(var(--brand-teal))' : 'hsl(var(--muted))',
-              color: input.trim() && !loading ? '#fff' : 'hsl(var(--muted-foreground))',
-              boxShadow: input.trim() && !loading ? '0 4px 14px rgba(0,78,110,0.28)' : 'none',
+              background: input.trim() && !loading && !recording ? 'hsl(var(--brand-teal))' : 'hsl(var(--muted))',
+              color: input.trim() && !loading && !recording ? '#fff' : 'hsl(var(--muted-foreground))',
+              boxShadow: input.trim() && !loading && !recording ? '0 4px 14px rgba(0,78,110,0.28)' : 'none',
             }}
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
           </button>
         </div>
+        {voiceError && (
+          <p className="text-[11px] text-red-500 text-center mt-1.5">{voiceError}</p>
+        )}
         <p className="text-[11px] text-muted-foreground/80 text-center mt-2">
           <kbd className="px-1.5 py-[1px] rounded border border-border bg-muted font-mono text-[10px] text-muted-foreground">Enter</kbd> to send
           <span className="mx-2">·</span>
           <kbd className="px-1.5 py-[1px] rounded border border-border bg-muted font-mono text-[10px] text-muted-foreground">Shift</kbd>
           {' + '}
-          <kbd className="px-1.5 py-[1px] rounded border border-border bg-muted font-mono text-[10px] text-muted-foreground">Enter</kbd> for a new line
+          <kbd className="px-1.5 py-[1px] rounded border border-border bg-muted font-mono text-[10px] text-muted-foreground">Enter</kbd> for new line
           <span className="mx-2">·</span>
-          <Mic className="w-3 h-3 inline -mt-0.5" /> to speak
+          <kbd className="px-1.5 py-[1px] rounded border border-border bg-muted font-mono text-[10px] text-muted-foreground inline-flex items-center gap-1"><Mic className="w-2.5 h-2.5" />Mic</kbd> to dictate
         </p>
       </div>
     </div>

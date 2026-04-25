@@ -25,26 +25,66 @@ export default function RegisterPage() {
     setLoading(true);
     setError('');
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: fullName,
-          // Stored as string in user_metadata; the DB trigger casts to integer.
-          // Empty string → NULL (manual sync).
-          sync_frequency_minutes: syncFrequency === null ? '' : String(syncFrequency),
+    try {
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: fullName,
+            // Stored as string in user_metadata; the DB trigger casts to integer.
+            // Empty string → NULL (manual sync).
+            sync_frequency_minutes: syncFrequency === null ? '' : String(syncFrequency),
+          },
         },
-      },
-    });
+      });
 
-    if (error) {
-      setError(error.message);
-      setLoading(false);
-    } else {
-      setSuccess(true);
+      if (error) {
+        console.error('[register] supabase.auth.signUp error', error);
+        setError(friendlySignupError(error));
+        setLoading(false);
+      } else {
+        setSuccess(true);
+        setLoading(false);
+      }
+    } catch (err) {
+      console.error('[register] unexpected error', err);
+      setError(
+        err instanceof TypeError
+          ? 'Could not reach the authentication server. Check your internet connection and try again.'
+          : 'Something went wrong creating your account. Please try again in a moment.'
+      );
       setLoading(false);
     }
+  }
+
+  function friendlySignupError(error: { message?: string; status?: number; code?: string }): string {
+    const raw = (error.message || '').toLowerCase();
+    const status = error.status;
+    const code = error.code;
+
+    if (raw.includes('already registered') || raw.includes('user already') || code === 'user_already_exists') {
+      return 'An account with this email already exists. Try signing in instead.';
+    }
+    if (raw.includes('rate limit') || status === 429) {
+      return 'Too many signup attempts. Please wait a few minutes and try again.';
+    }
+    if (raw.includes('invalid') && raw.includes('email')) {
+      return 'That email address looks invalid. Please double-check and try again.';
+    }
+    if (raw.includes('password')) {
+      return error.message || 'Password did not meet the requirements.';
+    }
+    if (raw.includes('signup') && raw.includes('disabled')) {
+      return 'Signups are currently disabled. Please contact support.';
+    }
+    if (raw.includes('database error') || raw.includes('saving new user')) {
+      return 'We could not finish creating your account (server-side error). Please contact support if this keeps happening.';
+    }
+    if (status === 500 || status === 503 || status === 504) {
+      return 'The authentication service is temporarily unavailable. Please try again in a minute.';
+    }
+    return error.message || 'Could not create your account. Please try again.';
   }
 
   if (success) {

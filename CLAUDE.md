@@ -17,7 +17,7 @@ No test framework is configured.
 
 Copy `.env.local.example` to `.env.local` and fill in:
 - `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY`
-- `NVIDIA_API_KEY` (voice transcription via NVIDIA's hosted whisper-large-v3 — get a key at build.nvidia.com)
+- `AI_KEY_ENCRYPTION_SECRET` (random 32-byte base64 — `openssl rand -base64 32` — used to encrypt user-supplied AI keys at rest)
 - LLM provider keys are BYOK via the Settings → Setup UI and stored encrypted in Supabase; no env var needed for enrichment/compose
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` (Gmail OAuth)
 - `NEXTAUTH_URL` / `NEXTAUTH_SECRET`
@@ -36,8 +36,7 @@ User input (chat/voice) → OpenAI intent parser → Action executor → Gmail A
 **`/src/app/api/`** — All backend logic lives in Next.js route handlers:
 - `/emails` — Sync and fetch emails from Gmail
 - `/chat` — Parse natural language intent and execute email actions
-- `/compose` — AI email composition with tone selection
-- `/voice` — Whisper transcription → compose/send
+- `/compose` — AI email composition with tone selection (also the entrypoint for voice-dictated prompts; the transcript is captured in the browser via Web Speech API and posted as plain text)
 - `/auth/gmail/connect` + `/auth/gmail/callback` — Gmail OAuth flow
 - `/connections` — Multi-account CRUD (max 5 per user)
 - `/gmail/status` — Connection health check
@@ -46,7 +45,7 @@ User input (chat/voice) → OpenAI intent parser → Action executor → Gmail A
 - `ai/openai.ts` — All GPT-4.1 calls: email enrichment, intent parsing, reply generation, composition
 - `email/gmail.ts` — Gmail API client (fetch, send, OAuth token handling)
 - `email/actions.ts` — Email business logic (filter, reply, summarize, search)
-- `email/compose.ts` — Voice and compose workflows
+- `email/compose.ts` — AI compose + send workflow (used by both typed and voice-dictated prompts)
 - `email/token.ts` — OAuth token storage/retrieval
 - `supabase/client.ts` — Supabase client factories (browser vs. server vs. admin)
 - `supabase/db.ts` — Database query helpers
@@ -59,7 +58,7 @@ User input (chat/voice) → OpenAI intent parser → Action executor → Gmail A
 
 Two migrations in `supabase/migrations/`:
 1. Initial schema: `profiles`, `email_connections`, `emails`, `chat_sessions`, `chat_messages`, `email_replies`
-2. Multi-account additions: extends `email_connections` to allow multiple accounts; adds `composed_emails` and `voice_transcriptions` tables
+2. Multi-account additions: extends `email_connections` to allow multiple accounts; adds `composed_emails` table (`voice_transcriptions` table also exists from this migration but is no longer written to — voice runs in the browser now)
 
 All tables have RLS policies — users only access their own data. API routes use the **service role** (admin) Supabase client; the browser client uses the anon key.
 
@@ -71,7 +70,7 @@ All tables have RLS policies — users only access their own data. API routes us
 
 **Tone selection** — compose/reply supports: professional, friendly, formal, assertive, concise, apologetic, persuasive.
 
-**Voice** — audio (webm/mp4/wav, max 25 MB) → NVIDIA whisper-large-v3 transcription → LLM composition → optional send. See `src/lib/ai/nvidia-whisper.ts`.
+**Voice** — speech-to-text runs entirely in the browser via the Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`). Used in the chat composer (`src/components/chat/ChatInterface.tsx`) and the email composer (`src/components/ui/VoiceRecorder.tsx`). The captured transcript is sent as a plain-text prompt to `/api/compose` — no audio uploads, no server-side STT dependency. Requires a Chromium-based browser (Chrome, Edge, Brave, Arc); Firefox surfaces a clear "use Chromium" message.
 
 ### Auth
 

@@ -444,15 +444,6 @@ export async function getComposedEmails(userId: string, limit = 20): Promise<Com
 }
 
 // ============================================================
-// VOICE TRANSCRIPTIONS
-// ============================================================
-
-export async function saveVoiceTranscription(data: Record<string, unknown>) {
-  const { error } = await supabase.from('voice_transcriptions').insert(data);
-  if (error) console.error('saveVoiceTranscription:', error.message);
-}
-
-// ============================================================
 // REPLY TRACKING
 // ============================================================
 

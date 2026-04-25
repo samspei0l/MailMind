@@ -151,18 +151,6 @@ export async function generateEmailReply(
   return text || 'Thank you for your email. I will get back to you shortly.';
 }
 
-// ---------------------------------------------------------------------------
-// VOICE TRANSCRIPTION (Whisper)
-//
-// We use NVIDIA's hosted whisper-large-v3 (OpenAI-compatible endpoint) so
-// voice works without requiring a separate OpenAI subscription. The key
-// lives in process.env.NVIDIA_API_KEY — see src/lib/ai/nvidia-whisper.ts
-// for the request details.
-//
-// The function signature is preserved so callers (/api/voice, compose.ts)
-// don't need to change.
-// ---------------------------------------------------------------------------
-export { transcribeWithNvidia as transcribeVoice } from './nvidia-whisper';
 
 // ---------------------------------------------------------------------------
 // CHAT RESPONSE

@@ -15,6 +15,7 @@ export type AIProviderId =
   | 'nvidia'
   | 'deepseek'
   | 'xai'
+  | 'ollama'
   | 'custom';
 
 export interface ProviderSpec {
@@ -26,6 +27,8 @@ export interface ProviderSpec {
   keyHint: string;                             // UI helper: expected key prefix/format
   docsUrl: string;
   requiresBaseURL?: boolean;                   // 'custom' lets the user enter one
+  baseURLEditable?: boolean;                   // Pre-filled but the user may override (Ollama self-hosted etc.)
+  models?: string[];                           // If set, the setup UI renders a dropdown instead of a free-text model input
 }
 
 export const PROVIDERS: Record<AIProviderId, ProviderSpec> = {
@@ -100,6 +103,27 @@ export const PROVIDERS: Record<AIProviderId, ProviderSpec> = {
     defaultModel: 'grok-2-latest',
     keyHint: 'starts with xai-',
     docsUrl: 'https://console.x.ai',
+  },
+  ollama: {
+    id: 'ollama',
+    label: 'Ollama Cloud',
+    shape: 'openai-compatible',
+    // Ollama Cloud exposes an OpenAI-compatible /v1 endpoint. Self-hosted
+    // Ollama users can override this to e.g. http://localhost:11434/v1.
+    baseURL: 'https://ollama.com/v1',
+    baseURLEditable: true,
+    defaultModel: 'gpt-oss:120b-cloud',
+    keyHint: 'Ollama Cloud API key',
+    docsUrl: 'https://ollama.com/settings/keys',
+    // Cloud-hosted models (run on Ollama's GPUs, billed to your account).
+    // The `-cloud` suffix is what routes the request to a hosted instance.
+    models: [
+      'gpt-oss:120b-cloud',
+      'gpt-oss:20b-cloud',
+      'deepseek-v3.1:671b-cloud',
+      'qwen3-coder:480b-cloud',
+      'kimi-k2:1t-cloud',
+    ],
   },
   custom: {
     id: 'custom',

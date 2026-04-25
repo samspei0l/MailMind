@@ -1,5 +1,5 @@
-import { getConnectionById, getEmailById, saveComposedEmail, updateComposedEmailStatus, saveVoiceTranscription } from '@/lib/supabase/db';
-import { composeEmail, generateEmailReply, transcribeVoice } from '@/lib/ai/openai';
+import { getConnectionById, getEmailById, saveComposedEmail, updateComposedEmailStatus } from '@/lib/supabase/db';
+import { composeEmail } from '@/lib/ai/openai';
 import { sendGmailReply } from '@/lib/email/gmail';
 import { getValidAccessToken } from '@/lib/email/token';
 import type { ComposeRequest, ComposeResult, EmailTone, ActionResult } from '@/types';
@@ -156,55 +156,6 @@ export async function composeAndSend(
     };
   } catch (err) {
     return { error: (err as Error).message };
-  }
-}
-
-// ============================================================
-// VOICE TO EMAIL
-// Transcribes audio then pipes through composeAndSend
-// ============================================================
-
-export async function voiceToEmail(
-  userId: string,
-  audioBuffer: Buffer,
-  mimeType: string,
-  fromConnectionId: string,
-  sendImmediately = false
-): Promise<ActionResult> {
-  try {
-    const { transcript, duration } = await transcribeVoice(audioBuffer, mimeType);
-
-    // Save transcription for audit
-    await saveVoiceTranscription({
-      user_id: userId,
-      transcript,
-      audio_duration_seconds: duration,
-    });
-
-    // Detect tone from voice transcript automatically
-    const tone = detectToneFromPrompt(transcript);
-
-    // Compose the email from the transcript
-    const result = await composeAndSend(userId, {
-      prompt: transcript,
-      tone,
-      from_connection_id: fromConnectionId,
-      send_immediately: sendImmediately,
-    });
-
-    // Link transcription to composed email if available
-    if (result.compose_result?.composed_email_id) {
-      await saveVoiceTranscription({
-        user_id: userId,
-        transcript,
-        audio_duration_seconds: duration,
-        composed_email_id: result.compose_result.composed_email_id,
-      });
-    }
-
-    return result;
-  } catch (err) {
-    return { error: `Voice processing failed: ${(err as Error).message}` };
   }
 }
 
